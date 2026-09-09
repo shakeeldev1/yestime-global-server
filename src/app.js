@@ -25,6 +25,10 @@ if (env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
+app.get('/', (_req, res) => {
+  res.status(200).json({ success: true, message: 'YesTime Global server is running' });
+});
+
 app.use('/api', routes);
 
 app.use(notFound);
