@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
+    "build": "node --check src/server.js",
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "create-admin": "node src/scripts/createAdmin.js"
