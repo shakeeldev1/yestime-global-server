@@ -190,6 +190,51 @@ const myProfile = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { user: req.user }, 'Profile fetched successfully'));
 });
 
+// PATCH /api/auth/me
+const updateProfile = asyncHandler(async (req, res) => {
+  const user = req.user;
+  const { name, phoneNumber, shopName, address, description, image, categories } = req.body;
+
+  if (name !== undefined) user.name = name;
+  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber || null;
+
+  const businessFields = [shopName, address, description, image, categories].some(
+    (value) => value !== undefined
+  );
+  if (businessFields && user.role !== 'shopkeeper') {
+    throw new ApiError(403, 'Only shopkeeper accounts can update business profile fields');
+  }
+
+  if (shopName !== undefined) user.shopName = shopName;
+  if (address !== undefined) user.businessAddress = address;
+  if (description !== undefined) user.businessDescription = description || null;
+  if (image !== undefined) user.businessImage = image || null;
+  if (categories !== undefined) user.businessCategories = [...new Set(categories)];
+
+  await user.save();
+  res.status(200).json(new ApiResponse(200, { user }, 'Profile updated successfully'));
+});
+
+// POST /api/auth/change-password
+const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const user = await User.findById(req.user._id).select('+password');
+
+  if (!user || !(await user.comparePassword(currentPassword))) {
+    throw new ApiError(400, 'Current password is incorrect');
+  }
+  if (currentPassword === newPassword) {
+    throw new ApiError(400, 'New password must be different from the current password');
+  }
+
+  user.password = newPassword;
+  await user.setRefreshToken(null);
+  await user.save();
+  clearAuthCookies(res);
+
+  res.status(200).json(new ApiResponse(200, null, 'Password changed successfully, please log in again'));
+});
+
 // POST /api/auth/forgot-password
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
@@ -238,6 +283,8 @@ module.exports = {
   logout,
   refreshToken,
   myProfile,
+  updateProfile,
+  changePassword,
   forgotPassword,
   resetPassword,
 };

@@ -7,6 +7,8 @@ const {
   logout,
   refreshToken,
   myProfile,
+  updateProfile,
+  changePassword,
   forgotPassword,
   resetPassword,
 } = require('../controllers/auth.controller');
@@ -17,6 +19,8 @@ const {
   resendOtpValidator,
   forgotPasswordValidator,
   resetPasswordValidator,
+  updateProfileValidator,
+  changePasswordValidator,
 } = require('../validators/auth.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate } = require('../middlewares/auth.middleware');
@@ -35,5 +39,7 @@ router.post('/reset-password', resetPasswordValidator, validate, resetPassword);
 
 router.post('/logout', authenticate, logout);
 router.get('/me', authenticate, myProfile);
+router.patch('/me', authenticate, updateProfileValidator, validate, updateProfile);
+router.post('/change-password', authenticate, changePasswordValidator, validate, changePassword);
 
 module.exports = router;

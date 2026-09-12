@@ -163,6 +163,22 @@ Response `200`:
 { "statusCode": 200, "data": { "user": { "_id": "...", "name": "...", "email": "...", "role": "user", "createdAt": "...", "updatedAt": "..." } }, "message": "Profile fetched successfully", "success": true }
 ```
 
+### `PATCH /auth/me` 🔒
+
+Updates the authenticated user's profile. `name` and `phoneNumber` are
+available to all users. Shopkeepers can also update `shopName`, `address`,
+`description`, `image`, and `categories`. Email cannot be changed through this
+endpoint.
+
+### `POST /auth/change-password` 🔒
+
+Changes the authenticated user's password:
+```json
+{ "currentPassword": "old-password", "newPassword": "new-password" }
+```
+The current password is required. Existing refresh sessions are revoked and
+the user must log in again after a successful change.
+
 ## 🔒 Authenticating a request
 
 Either:
@@ -527,6 +543,8 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | POST | `/auth/reset-password` | No | Verify OTP, set new password |
 | POST | `/auth/logout` | Yes | Revoke refresh token, clear cookies |
 | GET | `/auth/me` | Yes | Get current user's profile |
+| PATCH | `/auth/me` | Yes | Edit current user's profile |
+| POST | `/auth/change-password` | Yes | Change password and revoke sessions |
 | POST | `/tokens/activate` | Yes (shopper) | Pay Rs 100, get first token |
 | GET | `/tokens/me` | Yes | List my tokens |
 | POST | `/purchases` | Yes (shopkeeper) | Record a shop sale, or a dealer-submitted property/car/bike deal |

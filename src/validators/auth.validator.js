@@ -47,6 +47,29 @@ const resetPasswordValidator = [
     .withMessage('New password must be at least 6 characters long'),
 ];
 
+const updateProfileValidator = [
+  body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
+  body('phoneNumber')
+    .optional({ values: 'null' })
+    .trim()
+    .isLength({ min: 7, max: 20 })
+    .withMessage('phoneNumber must be between 7 and 20 characters'),
+  body('shopName').optional().trim().isLength({ min: 1, max: 120 }).withMessage('shopName must be 1 to 120 characters'),
+  body('address').optional().trim().isLength({ min: 1, max: 300 }).withMessage('address must be 1 to 300 characters'),
+  body('description').optional({ values: 'null' }).trim().isLength({ max: 1000 }).withMessage('description must be at most 1000 characters'),
+  body('image').optional({ values: 'null' }).trim().isLength({ max: 500 }).withMessage('image must be at most 500 characters'),
+  body('categories').optional().isArray({ min: 1 }).withMessage('categories must contain at least one category'),
+  body('categories.*')
+    .optional()
+    .isIn(['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving'])
+    .withMessage('categories contains an unsupported category'),
+];
+
+const changePasswordValidator = [
+  body('currentPassword').notEmpty().withMessage('currentPassword is required'),
+  body('newPassword').isLength({ min: 6 }).withMessage('newPassword must be at least 6 characters long'),
+];
+
 module.exports = {
   signupValidator,
   loginValidator,
@@ -54,4 +77,6 @@ module.exports = {
   resendOtpValidator,
   forgotPasswordValidator,
   resetPasswordValidator,
+  updateProfileValidator,
+  changePasswordValidator,
 };

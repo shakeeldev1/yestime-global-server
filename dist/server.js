@@ -482,6 +482,40 @@ var require_auth_controller = __commonJS({
     var myProfile = asyncHandler(async (req, res) => {
       res.status(200).json(new ApiResponse(200, { user: req.user }, "Profile fetched successfully"));
     });
+    var updateProfile = asyncHandler(async (req, res) => {
+      const user = req.user;
+      const { name, phoneNumber, shopName, address, description, image, categories } = req.body;
+      if (name !== void 0) user.name = name;
+      if (phoneNumber !== void 0) user.phoneNumber = phoneNumber || null;
+      const businessFields = [shopName, address, description, image, categories].some(
+        (value) => value !== void 0
+      );
+      if (businessFields && user.role !== "shopkeeper") {
+        throw new ApiError(403, "Only shopkeeper accounts can update business profile fields");
+      }
+      if (shopName !== void 0) user.shopName = shopName;
+      if (address !== void 0) user.businessAddress = address;
+      if (description !== void 0) user.businessDescription = description || null;
+      if (image !== void 0) user.businessImage = image || null;
+      if (categories !== void 0) user.businessCategories = [...new Set(categories)];
+      await user.save();
+      res.status(200).json(new ApiResponse(200, { user }, "Profile updated successfully"));
+    });
+    var changePassword = asyncHandler(async (req, res) => {
+      const { currentPassword, newPassword } = req.body;
+      const user = await User.findById(req.user._id).select("+password");
+      if (!user || !await user.comparePassword(currentPassword)) {
+        throw new ApiError(400, "Current password is incorrect");
+      }
+      if (currentPassword === newPassword) {
+        throw new ApiError(400, "New password must be different from the current password");
+      }
+      user.password = newPassword;
+      await user.setRefreshToken(null);
+      await user.save();
+      clearAuthCookies(res);
+      res.status(200).json(new ApiResponse(200, null, "Password changed successfully, please log in again"));
+    });
     var forgotPassword = asyncHandler(async (req, res) => {
       const { email } = req.body;
       const user = await User.findOne({ email });
@@ -516,6 +550,8 @@ var require_auth_controller = __commonJS({
       logout,
       refreshToken,
       myProfile,
+      updateProfile,
+      changePassword,
       forgotPassword,
       resetPassword
     };
@@ -547,13 +583,29 @@ var require_auth_validator = __commonJS({
       otpField,
       body("newPassword").isLength({ min: 6 }).withMessage("New password must be at least 6 characters long")
     ];
+    var updateProfileValidator = [
+      body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
+      body("phoneNumber").optional({ values: "null" }).trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
+      body("shopName").optional().trim().isLength({ min: 1, max: 120 }).withMessage("shopName must be 1 to 120 characters"),
+      body("address").optional().trim().isLength({ min: 1, max: 300 }).withMessage("address must be 1 to 300 characters"),
+      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
+      body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
+      body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
+      body("categories.*").optional().isIn(["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"]).withMessage("categories contains an unsupported category")
+    ];
+    var changePasswordValidator = [
+      body("currentPassword").notEmpty().withMessage("currentPassword is required"),
+      body("newPassword").isLength({ min: 6 }).withMessage("newPassword must be at least 6 characters long")
+    ];
     module2.exports = {
       signupValidator,
       loginValidator,
       verifyEmailValidator,
       resendOtpValidator,
       forgotPasswordValidator,
-      resetPasswordValidator
+      resetPasswordValidator,
+      updateProfileValidator,
+      changePasswordValidator
     };
   }
 });
@@ -624,6 +676,8 @@ var require_auth_routes = __commonJS({
       logout,
       refreshToken,
       myProfile,
+      updateProfile,
+      changePassword,
       forgotPassword,
       resetPassword
     } = require_auth_controller();
@@ -633,7 +687,9 @@ var require_auth_routes = __commonJS({
       verifyEmailValidator,
       resendOtpValidator,
       forgotPasswordValidator,
-      resetPasswordValidator
+      resetPasswordValidator,
+      updateProfileValidator,
+      changePasswordValidator
     } = require_auth_validator();
     var validate = require_validate_middleware();
     var { authenticate } = require_auth_middleware();
@@ -647,6 +703,8 @@ var require_auth_routes = __commonJS({
     router.post("/reset-password", resetPasswordValidator, validate, resetPassword);
     router.post("/logout", authenticate, logout);
     router.get("/me", authenticate, myProfile);
+    router.patch("/me", authenticate, updateProfileValidator, validate, updateProfile);
+    router.post("/change-password", authenticate, changePasswordValidator, validate, changePassword);
     module2.exports = router;
   }
 });
