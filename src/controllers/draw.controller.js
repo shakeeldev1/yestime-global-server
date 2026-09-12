@@ -31,13 +31,101 @@ const listDraws = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { draws }, 'Draws fetched successfully'));
 });
 
+// GET /api/draws/winners-history (public winners feed)
+const publicWinnersHistory = asyncHandler(async (req, res) => {
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const filter = { winnerUser: { $ne: null }, winnerToken: { $ne: null } };
+  const skip = (page - 1) * limit;
+
+  const [draws, total, rewardSummary] = await Promise.all([
+    Draw.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select('winningNumber winnerToken winnerUser rewardLevel rewardAmount createdAt')
+      .populate({ path: 'winnerToken', select: 'tokenNumber' })
+      .populate({ path: 'winnerUser', select: 'name shopName' }),
+    Draw.countDocuments(filter),
+    Draw.aggregate([
+      { $match: filter },
+      { $group: { _id: null, totalRewardAmount: { $sum: '$rewardAmount' } } },
+    ]),
+  ]);
+
+  const winners = draws.map((draw) => ({
+    id: draw._id,
+    winnerName: draw.winnerUser?.shopName || draw.winnerUser?.name || 'Winner',
+    winningNumber: draw.winningNumber,
+    tokenNumber: draw.winnerToken?.tokenNumber || null,
+    rewardLevel: draw.rewardLevel,
+    rewardAmount: draw.rewardAmount,
+    wonAt: draw.createdAt,
+  }));
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        winners,
+        summary: {
+          totalWinners: total,
+          totalRewardAmount: rewardSummary[0]?.totalRewardAmount || 0,
+        },
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      },
+      'Public winners history fetched successfully'
+    )
+  );
+});
+
 // GET /api/draws/my-wins
 const myWins = asyncHandler(async (req, res) => {
-  const draws = await Draw.find({ winnerUser: req.user._id })
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const filter = { winnerUser: req.user._id };
+  const skip = (page - 1) * limit;
+  const [draws, total] = await Promise.all([
+    Draw.find(filter)
     .sort({ createdAt: -1 })
-    .populate({ path: 'winnerToken', select: 'tokenNumber' });
+    .skip(skip)
+    .limit(limit)
+    .populate({ path: 'winnerToken', select: 'tokenNumber' }),
+    Draw.countDocuments(filter),
+  ]);
 
-  res.status(200).json(new ApiResponse(200, { draws }, 'Your wins fetched successfully'));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { draws, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      'Your wins fetched successfully'
+    )
+  );
+});
+
+// GET /api/draws/winners (admin only)
+const listWinners = asyncHandler(async (req, res) => {
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const filter = { winnerUser: { $ne: null } };
+  const skip = (page - 1) * limit;
+  const [draws, total] = await Promise.all([
+    Draw.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate({ path: 'winnerToken', select: 'tokenNumber' })
+      .populate({ path: 'winnerUser', select: 'name email shopName' }),
+    Draw.countDocuments(filter),
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { draws, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      'Winner history fetched successfully'
+    )
+  );
 });
 
 // GET /api/draws/scheduler (admin only)
@@ -65,7 +153,9 @@ const stopScheduler = asyncHandler(async (_req, res) => {
 module.exports = {
   triggerDraws,
   listDraws,
+  publicWinnersHistory,
   myWins,
+  listWinners,
   schedulerStatus,
   startScheduler,
   stopScheduler,

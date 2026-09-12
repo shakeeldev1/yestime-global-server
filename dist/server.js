@@ -1793,9 +1793,76 @@ var require_draw_controller = __commonJS({
       const draws = await Draw.find().sort({ createdAt: -1 }).limit(limit).select("winningNumber rewardLevel rewardAmount createdAt winnerToken").populate({ path: "winnerToken", select: "tokenNumber" });
       res.status(200).json(new ApiResponse(200, { draws }, "Draws fetched successfully"));
     });
+    var publicWinnersHistory = asyncHandler(async (req, res) => {
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const filter = { winnerUser: { $ne: null }, winnerToken: { $ne: null } };
+      const skip = (page - 1) * limit;
+      const [draws, total, rewardSummary] = await Promise.all([
+        Draw.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select("winningNumber winnerToken winnerUser rewardLevel rewardAmount createdAt").populate({ path: "winnerToken", select: "tokenNumber" }).populate({ path: "winnerUser", select: "name shopName" }),
+        Draw.countDocuments(filter),
+        Draw.aggregate([
+          { $match: filter },
+          { $group: { _id: null, totalRewardAmount: { $sum: "$rewardAmount" } } }
+        ])
+      ]);
+      const winners = draws.map((draw) => ({
+        id: draw._id,
+        winnerName: draw.winnerUser?.shopName || draw.winnerUser?.name || "Winner",
+        winningNumber: draw.winningNumber,
+        tokenNumber: draw.winnerToken?.tokenNumber || null,
+        rewardLevel: draw.rewardLevel,
+        rewardAmount: draw.rewardAmount,
+        wonAt: draw.createdAt
+      }));
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            winners,
+            summary: {
+              totalWinners: total,
+              totalRewardAmount: rewardSummary[0]?.totalRewardAmount || 0
+            },
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+          },
+          "Public winners history fetched successfully"
+        )
+      );
+    });
     var myWins = asyncHandler(async (req, res) => {
-      const draws = await Draw.find({ winnerUser: req.user._id }).sort({ createdAt: -1 }).populate({ path: "winnerToken", select: "tokenNumber" });
-      res.status(200).json(new ApiResponse(200, { draws }, "Your wins fetched successfully"));
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const filter = { winnerUser: req.user._id };
+      const skip = (page - 1) * limit;
+      const [draws, total] = await Promise.all([
+        Draw.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate({ path: "winnerToken", select: "tokenNumber" }),
+        Draw.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { draws, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Your wins fetched successfully"
+        )
+      );
+    });
+    var listWinners = asyncHandler(async (req, res) => {
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const filter = { winnerUser: { $ne: null } };
+      const skip = (page - 1) * limit;
+      const [draws, total] = await Promise.all([
+        Draw.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate({ path: "winnerToken", select: "tokenNumber" }).populate({ path: "winnerUser", select: "name email shopName" }),
+        Draw.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { draws, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Winner history fetched successfully"
+        )
+      );
     });
     var schedulerStatus = asyncHandler(async (_req, res) => {
       res.status(200).json(new ApiResponse(200, { scheduler: scheduler.getStatus() }, "Scheduler status fetched"));
@@ -1815,7 +1882,9 @@ var require_draw_controller = __commonJS({
     module2.exports = {
       triggerDraws,
       listDraws,
+      publicWinnersHistory,
       myWins,
+      listWinners,
       schedulerStatus,
       startScheduler,
       stopScheduler
@@ -1826,12 +1895,16 @@ var require_draw_controller = __commonJS({
 // src/validators/draw.validator.js
 var require_draw_validator = __commonJS({
   "src/validators/draw.validator.js"(exports2, module2) {
-    var { body } = require("express-validator");
+    var { body, query } = require("express-validator");
     var triggerDrawsValidator = [
       body("count").optional().isInt({ min: 1, max: 1e3 }).withMessage("count must be between 1 and 1000"),
       body("winningNumber").optional().trim().isLength({ min: 6, max: 6 }).withMessage("winningNumber must be a 6-digit code").isNumeric().withMessage("winningNumber must be a 6-digit code")
     ];
-    module2.exports = { triggerDrawsValidator };
+    var winnerHistoryValidator = [
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    module2.exports = { triggerDrawsValidator, winnerHistoryValidator };
   }
 });
 
@@ -1842,20 +1915,24 @@ var require_draw_routes = __commonJS({
     var {
       triggerDraws,
       listDraws,
+      publicWinnersHistory,
       myWins,
+      listWinners,
       schedulerStatus,
       startScheduler,
       stopScheduler
     } = require_draw_controller();
-    var { triggerDrawsValidator } = require_draw_validator();
+    var { triggerDrawsValidator, winnerHistoryValidator } = require_draw_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
     router.post("/run", authenticate, authorize("admin"), triggerDrawsValidator, validate, triggerDraws);
+    router.get("/winners-history", winnerHistoryValidator, validate, publicWinnersHistory);
+    router.get("/winners", authenticate, authorize("admin"), winnerHistoryValidator, validate, listWinners);
     router.get("/scheduler", authenticate, authorize("admin"), schedulerStatus);
     router.post("/scheduler/start", authenticate, authorize("admin"), startScheduler);
     router.post("/scheduler/stop", authenticate, authorize("admin"), stopScheduler);
-    router.get("/my-wins", authenticate, myWins);
+    router.get("/my-wins", authenticate, winnerHistoryValidator, validate, myWins);
     router.get("/", listDraws);
     module2.exports = router;
   }

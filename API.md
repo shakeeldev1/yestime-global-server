@@ -433,6 +433,23 @@ Public — no auth required. Lists recent draws, newest first (`?limit=` up to 2
 
 The current user's own winning draws, newest first — this is the one place a shopper can see whether *their* token won.
 
+Supports optional `page` and `limit` query parameters and returns pagination
+metadata.
+
+### `GET /draws/winners-history`
+
+Public winner history for all users. Returns each winner's display name,
+winning number, token number, reward level, reward amount, and win date. Also
+returns total winner count and total rewards. Email addresses and private
+account fields are not included. Supports optional `page` and `limit`.
+
+### `GET /draws/winners` 🔒 (admin only)
+
+Returns all winning draws, newest first, with the winning user's name/email,
+shop name when available, winning token number, reward level, reward amount,
+winning number, and draw time. Supports optional `page` and `limit` query
+parameters.
+
 ### `GET /draws/scheduler` 🔒 (admin only)
 
 Live status of the automatic scheduler: `{ enabled, intervalSeconds, lastRunAt, lastError, totalRuns }`.
@@ -529,7 +546,9 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | POST | `/wallet/withdrawals/:id/reject` | Yes (admin) | Reject a withdrawal and refund it |
 | POST | `/draws/run` | Yes (admin) | Manually run one or more draws |
 | GET | `/draws` | No | List recent draw results (no winner identity) |
+| GET | `/draws/winners-history` | No | Show public lottery winner history and rewards |
 | GET | `/draws/my-wins` | Yes | List my winning draws |
+| GET | `/draws/winners` | Yes (admin) | List all winners and rewards |
 | GET | `/draws/scheduler` | Yes (admin) | Get automatic scheduler status |
 | POST | `/draws/scheduler/start` | Yes (admin) | Start the automatic scheduler |
 | POST | `/draws/scheduler/stop` | Yes (admin) | Pause the automatic scheduler |
