@@ -40,6 +40,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
   }
 
   const isShop = shopkeeper.businessType === 'shop';
+  const purchaseCategory = shopkeeper.businessCategories?.[0] || shopkeeper.businessType;
   const taxRate = isShop ? shopkeeper.taxRate : DEALER_COMPANY_RATE;
   const taxAmount = round2(amount * (taxRate / 100));
   const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
@@ -52,7 +53,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
     buyerId: token.owner,
     amount,
     companyAmount: taxAmount,
-    meta: { tokenNumber, amount, category: shopkeeper.businessType },
+    meta: { tokenNumber, amount, category: purchaseCategory },
   });
 
   const purchase = await Purchase.create({
@@ -61,7 +62,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
     channel: isShop ? 'shopkeeper' : 'dealer',
     token: token._id,
     tokenNumber: token.tokenNumber,
-    category: shopkeeper.businessType,
+    category: purchaseCategory,
     amount,
     taxRate,
     taxAmount,
@@ -132,4 +133,95 @@ const myPurchases = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { purchases }, 'Purchases fetched successfully'));
 });
 
-module.exports = { recordPurchase, recordSelfPurchase, myPurchases };
+// GET /api/purchases/history
+const purchaseHistory = asyncHandler(async (req, res) => {
+  const filter =
+    req.user.role === 'shopkeeper' ? { shopkeeper: req.user._id } : { shopper: req.user._id };
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+
+  if (req.query.category) filter.category = req.query.category;
+  if (req.query.from || req.query.to) {
+    filter.createdAt = {};
+    if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+    if (req.query.to) filter.createdAt.$lte = new Date(req.query.to);
+  }
+
+  const skip = (page - 1) * limit;
+  const [purchases, total] = await Promise.all([
+    Purchase.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+    Purchase.countDocuments(filter),
+  ]);
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { purchases, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      'Purchase history fetched successfully'
+    )
+  );
+});
+
+// GET /api/purchases/stats
+const purchaseStats = asyncHandler(async (req, res) => {
+  const filter =
+    req.user.role === 'shopkeeper' ? { shopkeeper: req.user._id } : { shopper: req.user._id };
+
+  if (req.query.from || req.query.to) {
+    filter.createdAt = {};
+    if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+    if (req.query.to) filter.createdAt.$lte = new Date(req.query.to);
+  }
+
+  const [overall, byCategory, byChannel] = await Promise.all([
+    Purchase.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          transactionCount: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          totalTaxAmount: { $sum: '$taxAmount' },
+        },
+      },
+    ]),
+    Purchase.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$category',
+          transactionCount: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+          totalTaxAmount: { $sum: '$taxAmount' },
+        },
+      },
+      { $sort: { totalAmount: -1, _id: 1 } },
+    ]),
+    Purchase.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$channel',
+          transactionCount: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+        },
+      },
+      { $sort: { totalAmount: -1, _id: 1 } },
+    ]),
+  ]);
+
+  const { transactionCount = 0, totalAmount = 0, totalTaxAmount = 0 } = overall[0] || {};
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        totals: { transactionCount, totalAmount, totalTaxAmount },
+        byCategory: byCategory.map(({ _id, ...item }) => ({ category: _id, ...item })),
+        byChannel: byChannel.map(({ _id, ...item }) => ({ channel: _id, ...item })),
+      },
+      'Purchase statistics fetched successfully'
+    )
+  );
+});
+
+module.exports = { recordPurchase, recordSelfPurchase, myPurchases, purchaseHistory, purchaseStats };

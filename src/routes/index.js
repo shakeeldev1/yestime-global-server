@@ -5,6 +5,7 @@ const tokenRoutes = require('./token.routes');
 const purchaseRoutes = require('./purchase.routes');
 const drawRoutes = require('./draw.routes');
 const adminRoutes = require('./admin.routes');
+const shopkeeperRoutes = require('./shopkeeper.routes');
 
 const router = express.Router();
 
@@ -15,5 +16,6 @@ router.use('/tokens', tokenRoutes);
 router.use('/purchases', purchaseRoutes);
 router.use('/draws', drawRoutes);
 router.use('/admin', adminRoutes);
+router.use('/shopkeepers', shopkeeperRoutes);
 
 module.exports = router;

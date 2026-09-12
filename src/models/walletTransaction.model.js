@@ -22,6 +22,7 @@ const walletTransactionSchema = new mongoose.Schema(
       enum: [
         'topup',
         'activation_fee',
+        'shopkeeper_registration_fee',
         'tax_debit',
         'admin_credit',
         'purchase_credit',

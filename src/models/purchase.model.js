@@ -32,7 +32,18 @@ const purchaseSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ['shop', 'property', 'car', 'bike'],
+      enum: [
+        'shop',
+        'shopping',
+        'wholesale',
+        'petrol_diesel',
+        'motorcycle_scooty',
+        'crop',
+        'self_service_saving',
+        'property',
+        'car',
+        'bike',
+      ],
       default: 'shop',
     },
     amount: {

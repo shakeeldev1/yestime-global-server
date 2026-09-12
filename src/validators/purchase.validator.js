@@ -1,4 +1,4 @@
-const { body } = require('express-validator');
+const { body, query } = require('express-validator');
 
 const recordPurchaseValidator = [
   body('tokenNumber')
@@ -17,4 +17,24 @@ const recordSelfPurchaseValidator = [
   body('amount').isFloat({ gt: 0 }).withMessage('Amount must be a positive number'),
 ];
 
-module.exports = { recordPurchaseValidator, recordSelfPurchaseValidator };
+const purchaseStatsValidator = [
+  query('category')
+    .optional()
+    .isIn([
+      'shop',
+      'shopping',
+      'wholesale',
+      'petrol_diesel',
+      'motorcycle_scooty',
+      'crop',
+      'self_service_saving',
+      'property',
+      'car',
+      'bike',
+    ])
+    .withMessage('category is not a supported purchase category'),
+  query('from').optional().isISO8601().withMessage('from must be a valid ISO date'),
+  query('to').optional().isISO8601().withMessage('to must be a valid ISO date'),
+];
+
+module.exports = { recordPurchaseValidator, recordSelfPurchaseValidator, purchaseStatsValidator };

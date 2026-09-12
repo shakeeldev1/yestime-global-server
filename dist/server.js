@@ -147,6 +147,44 @@ var require_user_model = __commonJS({
           enum: ["shop", "property", "car", "bike", null],
           default: null
         },
+        shopName: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        phoneNumber: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessAddress: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessDescription: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessImage: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessCategories: {
+          type: [String],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"],
+          default: []
+        },
+        shopkeeperRegistrationFee: {
+          type: Number,
+          default: 0
+        },
+        shopkeeperRegisteredAt: {
+          type: Date,
+          default: null
+        },
         taxRate: {
           type: Number,
           default: 2.5
@@ -643,6 +681,62 @@ var require_companyWallet_model = __commonJS({
   }
 });
 
+// src/models/walletTransaction.model.js
+var require_walletTransaction_model = __commonJS({
+  "src/models/walletTransaction.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var walletTransactionSchema = new mongoose.Schema(
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true
+        },
+        wallet: {
+          type: String,
+          enum: ["main", "lottery", "company"],
+          required: true
+        },
+        direction: {
+          type: String,
+          enum: ["credit", "debit"],
+          required: true
+        },
+        type: {
+          type: String,
+          enum: [
+            "topup",
+            "activation_fee",
+            "shopkeeper_registration_fee",
+            "tax_debit",
+            "admin_credit",
+            "purchase_credit",
+            "lottery_win",
+            "withdrawal",
+            "dealer_commission"
+          ],
+          required: true
+        },
+        amount: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        balanceAfter: {
+          type: Number,
+          required: true
+        },
+        meta: {
+          type: mongoose.Schema.Types.Mixed,
+          default: {}
+        }
+      },
+      { timestamps: true }
+    );
+    module2.exports = mongoose.model("WalletTransaction", walletTransactionSchema);
+  }
+});
+
 // src/models/wallet.model.js
 var require_wallet_model = __commonJS({
   "src/models/wallet.model.js"(exports2, module2) {
@@ -673,61 +767,6 @@ var require_wallet_model = __commonJS({
       { timestamps: true }
     );
     module2.exports = mongoose.model("Wallet", walletSchema);
-  }
-});
-
-// src/models/walletTransaction.model.js
-var require_walletTransaction_model = __commonJS({
-  "src/models/walletTransaction.model.js"(exports2, module2) {
-    var mongoose = require("mongoose");
-    var walletTransactionSchema = new mongoose.Schema(
-      {
-        user: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true
-        },
-        wallet: {
-          type: String,
-          enum: ["main", "lottery", "company"],
-          required: true
-        },
-        direction: {
-          type: String,
-          enum: ["credit", "debit"],
-          required: true
-        },
-        type: {
-          type: String,
-          enum: [
-            "topup",
-            "activation_fee",
-            "tax_debit",
-            "admin_credit",
-            "purchase_credit",
-            "lottery_win",
-            "withdrawal",
-            "dealer_commission"
-          ],
-          required: true
-        },
-        amount: {
-          type: Number,
-          required: true,
-          min: 0
-        },
-        balanceAfter: {
-          type: Number,
-          required: true
-        },
-        meta: {
-          type: mongoose.Schema.Types.Mixed,
-          default: {}
-        }
-      },
-      { timestamps: true }
-    );
-    module2.exports = mongoose.model("WalletTransaction", walletTransactionSchema);
   }
 });
 
@@ -947,6 +986,8 @@ var require_wallet_controller = __commonJS({
     var ApiResponse = require_ApiResponse();
     var User = require_user_model();
     var CompanyWallet = require_companyWallet_model();
+    var WalletTransaction = require_walletTransaction_model();
+    var mongoose = require("mongoose");
     var { getOrCreateWallet, creditWallet, creditCompanyWallet } = require_wallet_service();
     var { createTokenForOwner } = require_token_service();
     var ACTIVATION_FEE = 100;
@@ -954,6 +995,60 @@ var require_wallet_controller = __commonJS({
       const wallet = await getOrCreateWallet(req.user._id);
       res.status(200).json(new ApiResponse(200, { wallet }, "Wallet fetched successfully"));
     });
+    var getHistory = asyncHandler(async (req, res) => {
+      if (req.query.wallet === "company") {
+        throw new ApiError(403, "Company wallet history is available to admins only");
+      }
+      const { page, limit, skip } = getPagination(req.query);
+      const filter = buildHistoryFilter(req.query, req.user._id, false);
+      const [transactions, total] = await Promise.all([
+        WalletTransaction.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+        WalletTransaction.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { transactions, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Wallet history fetched successfully"
+        )
+      );
+    });
+    var getUserHistory = asyncHandler(async (req, res) => {
+      const { userId } = req.params;
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        throw new ApiError(400, "Invalid user id");
+      }
+      const user = await User.findById(userId).select("name email role");
+      if (!user) {
+        throw new ApiError(404, "User not found");
+      }
+      const { page, limit, skip } = getPagination(req.query);
+      const filter = buildHistoryFilter(req.query, user._id, true);
+      const [transactions, total] = await Promise.all([
+        WalletTransaction.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+        WalletTransaction.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { user, transactions, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Wallet history fetched successfully"
+        )
+      );
+    });
+    var getPagination = (query) => {
+      const page = Math.max(Number(query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+      return { page, limit, skip: (page - 1) * limit };
+    };
+    var buildHistoryFilter = (query, userId, includeCompany) => {
+      const filter = { user: userId };
+      if (!includeCompany) filter.wallet = { $in: ["main", "lottery"] };
+      if (query.wallet) filter.wallet = query.wallet;
+      if (query.direction) filter.direction = query.direction;
+      if (query.type) filter.type = query.type;
+      return filter;
+    };
     var topup = asyncHandler(async (req, res) => {
       const { amount, provider } = req.body;
       const wallet = await creditWallet(req.user._id, "main", amount, "topup", { provider });
@@ -975,7 +1070,7 @@ var require_wallet_controller = __commonJS({
       const company = await CompanyWallet.getSingleton();
       res.status(200).json(new ApiResponse(200, { company }, "Company wallet fetched successfully"));
     });
-    module2.exports = { myWallet, topup, activate, companyWallet };
+    module2.exports = { myWallet, getHistory, getUserHistory, topup, activate, companyWallet };
   }
 });
 
@@ -1105,7 +1200,7 @@ var require_withdrawal_controller = __commonJS({
 // src/validators/wallet.validator.js
 var require_wallet_validator = __commonJS({
   "src/validators/wallet.validator.js"(exports2, module2) {
-    var { body } = require("express-validator");
+    var { body, query } = require("express-validator");
     var topupValidator = [
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number"),
       body("provider").optional().isIn(["jazzcash", "easypaisa"]).withMessage("Provider must be jazzcash or easypaisa")
@@ -1118,7 +1213,24 @@ var require_wallet_validator = __commonJS({
     var rejectWithdrawalValidator = [
       body("reason").optional().trim().isLength({ max: 500 }).withMessage("reason must be under 500 characters")
     ];
-    module2.exports = { topupValidator, withdrawValidator, rejectWithdrawalValidator };
+    var walletHistoryValidator = [
+      query("wallet").optional().isIn(["main", "lottery", "company"]).withMessage("wallet must be main, lottery or company"),
+      query("direction").optional().isIn(["credit", "debit"]).withMessage("direction must be credit or debit"),
+      query("type").optional().isIn([
+        "topup",
+        "activation_fee",
+        "shopkeeper_registration_fee",
+        "tax_debit",
+        "admin_credit",
+        "purchase_credit",
+        "lottery_win",
+        "withdrawal",
+        "dealer_commission"
+      ]).withMessage("type is not a supported wallet transaction type"),
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    module2.exports = { topupValidator, withdrawValidator, rejectWithdrawalValidator, walletHistoryValidator };
   }
 });
 
@@ -1126,7 +1238,7 @@ var require_wallet_validator = __commonJS({
 var require_wallet_routes = __commonJS({
   "src/routes/wallet.routes.js"(exports2, module2) {
     var express = require("express");
-    var { myWallet, topup, companyWallet } = require_wallet_controller();
+    var { myWallet, getHistory, getUserHistory, topup, companyWallet } = require_wallet_controller();
     var {
       requestWithdrawal,
       myWithdrawals,
@@ -1134,11 +1246,18 @@ var require_wallet_routes = __commonJS({
       completeWithdrawal,
       rejectWithdrawal
     } = require_withdrawal_controller();
-    var { topupValidator, withdrawValidator, rejectWithdrawalValidator } = require_wallet_validator();
+    var {
+      topupValidator,
+      withdrawValidator,
+      rejectWithdrawalValidator,
+      walletHistoryValidator
+    } = require_wallet_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
     router.get("/me", authenticate, myWallet);
+    router.get("/history", authenticate, walletHistoryValidator, validate, getHistory);
+    router.get("/history/:userId", authenticate, authorize("admin"), walletHistoryValidator, validate, getUserHistory);
     router.post("/topup", authenticate, topupValidator, validate, topup);
     router.get("/company", authenticate, authorize("admin"), companyWallet);
     router.post("/withdraw", authenticate, withdrawValidator, validate, requestWithdrawal);
@@ -1221,7 +1340,18 @@ var require_purchase_model = __commonJS({
         },
         category: {
           type: String,
-          enum: ["shop", "property", "car", "bike"],
+          enum: [
+            "shop",
+            "shopping",
+            "wholesale",
+            "petrol_diesel",
+            "motorcycle_scooty",
+            "crop",
+            "self_service_saving",
+            "property",
+            "car",
+            "bike"
+          ],
           default: "shop"
         },
         amount: {
@@ -1297,6 +1427,7 @@ var require_purchase_controller = __commonJS({
         throw new ApiError(400, "This token is no longer active; ask the buyer for their current token number");
       }
       const isShop = shopkeeper.businessType === "shop";
+      const purchaseCategory = shopkeeper.businessCategories?.[0] || shopkeeper.businessType;
       const taxRate = isShop ? shopkeeper.taxRate : DEALER_COMPANY_RATE;
       const taxAmount = round2(amount * (taxRate / 100));
       const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
@@ -1305,7 +1436,7 @@ var require_purchase_controller = __commonJS({
         buyerId: token.owner,
         amount,
         companyAmount: taxAmount,
-        meta: { tokenNumber, amount, category: shopkeeper.businessType }
+        meta: { tokenNumber, amount, category: purchaseCategory }
       });
       const purchase = await Purchase.create({
         shopper: token.owner,
@@ -1313,7 +1444,7 @@ var require_purchase_controller = __commonJS({
         channel: isShop ? "shopkeeper" : "dealer",
         token: token._id,
         tokenNumber: token.tokenNumber,
-        category: shopkeeper.businessType,
+        category: purchaseCategory,
         amount,
         taxRate,
         taxAmount,
@@ -1370,14 +1501,93 @@ var require_purchase_controller = __commonJS({
       const purchases = await Purchase.find(filter).sort({ createdAt: -1 });
       res.status(200).json(new ApiResponse(200, { purchases }, "Purchases fetched successfully"));
     });
-    module2.exports = { recordPurchase, recordSelfPurchase, myPurchases };
+    var purchaseHistory = asyncHandler(async (req, res) => {
+      const filter = req.user.role === "shopkeeper" ? { shopkeeper: req.user._id } : { shopper: req.user._id };
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      if (req.query.category) filter.category = req.query.category;
+      if (req.query.from || req.query.to) {
+        filter.createdAt = {};
+        if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+        if (req.query.to) filter.createdAt.$lte = new Date(req.query.to);
+      }
+      const skip = (page - 1) * limit;
+      const [purchases, total] = await Promise.all([
+        Purchase.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+        Purchase.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { purchases, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Purchase history fetched successfully"
+        )
+      );
+    });
+    var purchaseStats = asyncHandler(async (req, res) => {
+      const filter = req.user.role === "shopkeeper" ? { shopkeeper: req.user._id } : { shopper: req.user._id };
+      if (req.query.from || req.query.to) {
+        filter.createdAt = {};
+        if (req.query.from) filter.createdAt.$gte = new Date(req.query.from);
+        if (req.query.to) filter.createdAt.$lte = new Date(req.query.to);
+      }
+      const [overall, byCategory, byChannel] = await Promise.all([
+        Purchase.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: null,
+              transactionCount: { $sum: 1 },
+              totalAmount: { $sum: "$amount" },
+              totalTaxAmount: { $sum: "$taxAmount" }
+            }
+          }
+        ]),
+        Purchase.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: "$category",
+              transactionCount: { $sum: 1 },
+              totalAmount: { $sum: "$amount" },
+              totalTaxAmount: { $sum: "$taxAmount" }
+            }
+          },
+          { $sort: { totalAmount: -1, _id: 1 } }
+        ]),
+        Purchase.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: "$channel",
+              transactionCount: { $sum: 1 },
+              totalAmount: { $sum: "$amount" }
+            }
+          },
+          { $sort: { totalAmount: -1, _id: 1 } }
+        ])
+      ]);
+      const { transactionCount = 0, totalAmount = 0, totalTaxAmount = 0 } = overall[0] || {};
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            totals: { transactionCount, totalAmount, totalTaxAmount },
+            byCategory: byCategory.map(({ _id, ...item }) => ({ category: _id, ...item })),
+            byChannel: byChannel.map(({ _id, ...item }) => ({ channel: _id, ...item }))
+          },
+          "Purchase statistics fetched successfully"
+        )
+      );
+    });
+    module2.exports = { recordPurchase, recordSelfPurchase, myPurchases, purchaseHistory, purchaseStats };
   }
 });
 
 // src/validators/purchase.validator.js
 var require_purchase_validator = __commonJS({
   "src/validators/purchase.validator.js"(exports2, module2) {
-    var { body } = require("express-validator");
+    var { body, query } = require("express-validator");
     var recordPurchaseValidator = [
       body("tokenNumber").trim().isLength({ min: 6, max: 6 }).withMessage("Token number must be a 6-digit code").isNumeric().withMessage("Token number must be a 6-digit code"),
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number")
@@ -1386,7 +1596,23 @@ var require_purchase_validator = __commonJS({
       body("category").isIn(["property", "car", "bike"]).withMessage("category must be one of property, car, bike"),
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number")
     ];
-    module2.exports = { recordPurchaseValidator, recordSelfPurchaseValidator };
+    var purchaseStatsValidator = [
+      query("category").optional().isIn([
+        "shop",
+        "shopping",
+        "wholesale",
+        "petrol_diesel",
+        "motorcycle_scooty",
+        "crop",
+        "self_service_saving",
+        "property",
+        "car",
+        "bike"
+      ]).withMessage("category is not a supported purchase category"),
+      query("from").optional().isISO8601().withMessage("from must be a valid ISO date"),
+      query("to").optional().isISO8601().withMessage("to must be a valid ISO date")
+    ];
+    module2.exports = { recordPurchaseValidator, recordSelfPurchaseValidator, purchaseStatsValidator };
   }
 });
 
@@ -1394,8 +1620,18 @@ var require_purchase_validator = __commonJS({
 var require_purchase_routes = __commonJS({
   "src/routes/purchase.routes.js"(exports2, module2) {
     var express = require("express");
-    var { recordPurchase, recordSelfPurchase, myPurchases } = require_purchase_controller();
-    var { recordPurchaseValidator, recordSelfPurchaseValidator } = require_purchase_validator();
+    var {
+      recordPurchase,
+      recordSelfPurchase,
+      myPurchases,
+      purchaseHistory,
+      purchaseStats
+    } = require_purchase_controller();
+    var {
+      recordPurchaseValidator,
+      recordSelfPurchaseValidator,
+      purchaseStatsValidator
+    } = require_purchase_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
@@ -1408,6 +1644,8 @@ var require_purchase_routes = __commonJS({
       validate,
       recordSelfPurchase
     );
+    router.get("/stats", authenticate, purchaseStatsValidator, validate, purchaseStats);
+    router.get("/history", authenticate, purchaseStatsValidator, validate, purchaseHistory);
     router.get("/me", authenticate, myPurchases);
     module2.exports = router;
   }
@@ -1871,6 +2109,140 @@ var require_admin_routes = __commonJS({
   }
 });
 
+// src/controllers/shopkeeper.controller.js
+var require_shopkeeper_controller = __commonJS({
+  "src/controllers/shopkeeper.controller.js"(exports2, module2) {
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var User = require_user_model();
+    var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
+    var SHOPKEEPER_REGISTRATION_FEE = 1500;
+    var getBusinessType = (category) => {
+      if (category === "property") return "property";
+      if (category === "car") return "car";
+      if (category === "motorcycle_scooty") return "bike";
+      return "shop";
+    };
+    var listShopkeepers = asyncHandler(async (req, res) => {
+      const page = Math.max(Number(req.query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const filter = { role: "shopkeeper", isVerified: true, isBlocked: false };
+      if (req.query.category) filter.businessCategories = req.query.category;
+      if (req.query.search) {
+        const search = req.query.search.trim();
+        filter.$or = [
+          { shopName: { $regex: search, $options: "i" } },
+          { businessAddress: { $regex: search, $options: "i" } },
+          { businessDescription: { $regex: search, $options: "i" } }
+        ];
+      }
+      const skip = (page - 1) * limit;
+      const [shopkeepers, total] = await Promise.all([
+        User.find(filter).select("shopName phoneNumber businessAddress businessDescription businessImage businessCategories businessType shopkeeperRegisteredAt").sort({ shopkeeperRegisteredAt: -1, _id: -1 }).skip(skip).limit(limit),
+        User.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { shopkeepers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Shopkeepers fetched successfully"
+        )
+      );
+    });
+    var registerShopkeeper = asyncHandler(async (req, res) => {
+      const user = req.user;
+      if (user.role !== "shopper") {
+        throw new ApiError(400, "Only shopper accounts can register as a shopkeeper");
+      }
+      const { shopName, phoneNumber, address, description, image, categories } = req.body;
+      const businessType = getBusinessType(categories[0]);
+      const wallet = await getOrCreateWallet(user._id);
+      if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
+        throw new ApiError(400, "Insufficient main wallet balance for the Rs 1500 shopkeeper registration fee");
+      }
+      await debitWallet(user._id, "main", SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
+        shopName,
+        categories
+      });
+      await creditCompanyWallet(user._id, SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
+        shopName,
+        categories
+      });
+      user.role = "shopkeeper";
+      user.businessType = businessType;
+      user.shopName = shopName;
+      user.phoneNumber = phoneNumber;
+      user.businessAddress = address;
+      user.businessDescription = description || null;
+      user.businessImage = image || null;
+      user.businessCategories = [...new Set(categories)];
+      user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+      user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
+      await user.save();
+      res.status(201).json(
+        new ApiResponse(
+          201,
+          { user, registrationFee: SHOPKEEPER_REGISTRATION_FEE },
+          "Shopkeeper registered successfully"
+        )
+      );
+    });
+    module2.exports = { registerShopkeeper, listShopkeepers };
+  }
+});
+
+// src/validators/shopkeeper.validator.js
+var require_shopkeeper_validator = __commonJS({
+  "src/validators/shopkeeper.validator.js"(exports2, module2) {
+    var { body, query } = require("express-validator");
+    var SHOPKEEPER_CATEGORIES = [
+      "shopping",
+      "wholesale",
+      "petrol_diesel",
+      "motorcycle_scooty",
+      "car",
+      "property",
+      "crop",
+      "self_service_saving"
+    ];
+    var shopkeeperRegistrationValidator = [
+      body("shopName").trim().notEmpty().withMessage("shopName is required").isLength({ max: 120 }).withMessage("shopName must be at most 120 characters"),
+      body("phoneNumber").trim().notEmpty().withMessage("phoneNumber is required").isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
+      body("address").trim().notEmpty().withMessage("address is required").isLength({ max: 300 }).withMessage("address must be at most 300 characters"),
+      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
+      body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
+      body("categories").isArray({ min: 1 }).withMessage("categories must contain at least one category"),
+      body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`)
+    ];
+    var shopkeeperDirectoryValidator = [
+      query("category").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage("category is not supported"),
+      query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    module2.exports = { shopkeeperRegistrationValidator, shopkeeperDirectoryValidator, SHOPKEEPER_CATEGORIES };
+  }
+});
+
+// src/routes/shopkeeper.routes.js
+var require_shopkeeper_routes = __commonJS({
+  "src/routes/shopkeeper.routes.js"(exports2, module2) {
+    var express = require("express");
+    var { registerShopkeeper, listShopkeepers } = require_shopkeeper_controller();
+    var {
+      shopkeeperRegistrationValidator,
+      shopkeeperDirectoryValidator
+    } = require_shopkeeper_validator();
+    var validate = require_validate_middleware();
+    var { authenticate } = require_auth_middleware();
+    var router = express.Router();
+    router.get("/", shopkeeperDirectoryValidator, validate, listShopkeepers);
+    router.post("/register", authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
+    module2.exports = router;
+  }
+});
+
 // src/routes/index.js
 var require_routes = __commonJS({
   "src/routes/index.js"(exports2, module2) {
@@ -1881,6 +2253,7 @@ var require_routes = __commonJS({
     var purchaseRoutes = require_purchase_routes();
     var drawRoutes = require_draw_routes();
     var adminRoutes = require_admin_routes();
+    var shopkeeperRoutes = require_shopkeeper_routes();
     var router = express.Router();
     router.get("/health", (_req, res) => res.status(200).json({ success: true, message: "OK" }));
     router.use("/auth", authRoutes);
@@ -1889,6 +2262,7 @@ var require_routes = __commonJS({
     router.use("/purchases", purchaseRoutes);
     router.use("/draws", drawRoutes);
     router.use("/admin", adminRoutes);
+    router.use("/shopkeepers", shopkeeperRoutes);
     module2.exports = router;
   }
 });

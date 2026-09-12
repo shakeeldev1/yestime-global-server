@@ -31,6 +31,44 @@ const userSchema = new mongoose.Schema(
       enum: ['shop', 'property', 'car', 'bike', null],
       default: null,
     },
+    shopName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    businessAddress: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    businessDescription: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    businessImage: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    businessCategories: {
+      type: [String],
+      enum: ['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving'],
+      default: [],
+    },
+    shopkeeperRegistrationFee: {
+      type: Number,
+      default: 0,
+    },
+    shopkeeperRegisteredAt: {
+      type: Date,
+      default: null,
+    },
     taxRate: {
       type: Number,
       default: 2.5,

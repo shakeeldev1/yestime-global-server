@@ -208,6 +208,44 @@ export default api;
 
 ## Roles
 
+### `POST /shopkeepers/register` 🔒
+
+Registers the authenticated shopper as a shopkeeper. The account must have at least
+Rs 1,500 in its main wallet. The fee is debited from the user's main wallet and
+credited to the company wallet in the same way as other wallet movements. This
+endpoint can only be used once per account.
+
+Request body:
+```json
+{
+  "shopName": "City Mart",
+  "phoneNumber": "+923001234567",
+  "address": "Main Market, Lahore",
+  "description": "General shopping and household goods",
+  "image": "https://example.com/city-mart.jpg",
+  "categories": ["shopping", "wholesale"]
+}
+```
+
+Allowed categories are `shopping`, `wholesale`, `petrol_diesel`,
+`motorcycle_scooty`, `car`, `property`, `crop`, and `self_service_saving`.
+The first category is used as the account's primary business channel for the
+existing purchase flow: `property` maps to property dealer, `car` to car dealer,
+`motorcycle_scooty` to bike dealer, and all other categories to shop.
+
+Response `201` contains the upgraded `user` and `registrationFee: 1500`.
+Errors: `400` if the caller is not a shopper or has insufficient main-wallet
+balance, and `422` for invalid or missing business details.
+
+### `GET /shopkeepers`
+
+Public shop directory. Returns verified and unblocked registered shopkeepers
+without exposing login credentials, wallet data, or email addresses.
+
+Optional query parameters: `category` (one of the eight registration
+categories), `search` (matches shop name, address, or description), `page`
+(default `1`), and `limit` (default `20`, maximum `100`).
+
 `signup` now accepts two optional fields:
 ```json
 { "name": "...", "email": "...", "password": "...", "role": "shopkeeper", "businessType": "shop" }
@@ -292,9 +330,42 @@ Errors: `400` if the shopper has no active token yet (activate one first), `400`
 
 For a shopper: purchases made *on* their tokens (via any channel — shopkeeper, dealer, or self). For a shopkeeper: purchases *they* recorded. Newest first.
 
+### `GET /purchases/stats` 🔒
+
+Returns purchase statistics for the authenticated user. Shopkeepers see the
+records they submitted; shoppers see purchases recorded against their tokens.
+The response includes overall `transactionCount`, `totalAmount`, and
+`totalTaxAmount`, plus grouped totals in `byCategory` and `byChannel`.
+
+Optional query parameters: `from` and `to` as ISO dates. Category groups retain
+the registered shopkeeper category, including `shopping`, `petrol_diesel`, and
+`crop`, so those activities can be counted and totaled separately.
+
+### `GET /purchases/history` 🔒
+
+Returns the actual purchase records for the authenticated user, newest first.
+Use `?category=shopping`, `?category=petrol_diesel`, or `?category=crop` to
+fetch one category's history. It also supports `from`, `to`, `page`, and
+`limit` query parameters and returns pagination metadata.
+
 ### `GET /wallet/me` 🔒
 
 Returns the current user's wallet (`mainBalance`, `lotteryBalance`).
+
+### `GET /wallet/history` 🔒
+
+Returns the current user's main and lottery wallet transactions, newest first.
+Optional query parameters: `wallet=main|lottery`, `direction=credit|debit`,
+`type` (a supported wallet transaction type), `page` (default `1`), and
+`limit` (default `20`, maximum `100`). Company-wallet history is admin-only.
+
+The response contains `transactions` and `pagination: { page, limit, total, pages }`.
+
+### `GET /wallet/history/:userId` 🔒 (admin only)
+
+Returns paginated wallet transactions for a selected user. Supports the same
+filters as `/wallet/history`, including `wallet=company` for company-credit
+records associated with that user.
 
 ### `POST /wallet/topup` 🔒
 
@@ -444,7 +515,11 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | POST | `/purchases` | Yes (shopkeeper) | Record a shop sale, or a dealer-submitted property/car/bike deal |
 | POST | `/purchases/self` | Yes (shopper) | Record my own property/car/bike deal (self-automated, no dealer) |
 | GET | `/purchases/me` | Yes | List my purchases (as shopper or shopkeeper) |
+| GET | `/purchases/stats` | Yes | Get purchase totals grouped by category and channel |
+| GET | `/purchases/history` | Yes | Get paginated purchase history, optionally by category |
 | GET | `/wallet/me` | Yes | Get my wallet balances |
+| GET | `/wallet/history` | Yes | Get my paginated wallet transaction history |
+| GET | `/wallet/history/:userId` | Yes (admin) | Get a user's wallet transaction history |
 | POST | `/wallet/topup` | Yes | Top up main wallet (placeholder, no real gateway yet) |
 | GET | `/wallet/company` | Yes (admin) | Get company wallet balance |
 | POST | `/wallet/withdraw` | Yes | Request a payout from my main wallet |

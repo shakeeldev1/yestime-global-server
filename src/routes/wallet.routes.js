@@ -1,5 +1,5 @@
 const express = require('express');
-const { myWallet, topup, companyWallet } = require('../controllers/wallet.controller');
+const { myWallet, getHistory, getUserHistory, topup, companyWallet } = require('../controllers/wallet.controller');
 const {
   requestWithdrawal,
   myWithdrawals,
@@ -7,13 +7,20 @@ const {
   completeWithdrawal,
   rejectWithdrawal,
 } = require('../controllers/withdrawal.controller');
-const { topupValidator, withdrawValidator, rejectWithdrawalValidator } = require('../validators/wallet.validator');
+const {
+  topupValidator,
+  withdrawValidator,
+  rejectWithdrawalValidator,
+  walletHistoryValidator,
+} = require('../validators/wallet.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
 router.get('/me', authenticate, myWallet);
+router.get('/history', authenticate, walletHistoryValidator, validate, getHistory);
+router.get('/history/:userId', authenticate, authorize('admin'), walletHistoryValidator, validate, getUserHistory);
 router.post('/topup', authenticate, topupValidator, validate, topup);
 router.get('/company', authenticate, authorize('admin'), companyWallet);
 

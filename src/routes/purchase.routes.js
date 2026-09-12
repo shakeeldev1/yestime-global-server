@@ -1,6 +1,16 @@
 const express = require('express');
-const { recordPurchase, recordSelfPurchase, myPurchases } = require('../controllers/purchase.controller');
-const { recordPurchaseValidator, recordSelfPurchaseValidator } = require('../validators/purchase.validator');
+const {
+  recordPurchase,
+  recordSelfPurchase,
+  myPurchases,
+  purchaseHistory,
+  purchaseStats,
+} = require('../controllers/purchase.controller');
+const {
+  recordPurchaseValidator,
+  recordSelfPurchaseValidator,
+  purchaseStatsValidator,
+} = require('../validators/purchase.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
@@ -15,6 +25,8 @@ router.post(
   validate,
   recordSelfPurchase
 );
+router.get('/stats', authenticate, purchaseStatsValidator, validate, purchaseStats);
+router.get('/history', authenticate, purchaseStatsValidator, validate, purchaseHistory);
 router.get('/me', authenticate, myPurchases);
 
 module.exports = router;
