@@ -5,7 +5,7 @@ const User = require('../models/user.model');
 const CompanyWallet = require('../models/companyWallet.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const mongoose = require('mongoose');
-const { getOrCreateWallet, creditWallet, creditCompanyWallet } = require('../services/wallet.service');
+const { getOrCreateWallet, creditCompanyWallet } = require('../services/wallet.service');
 const { createTokenForOwner } = require('../services/token.service');
 
 const ACTIVATION_FEE = 100;
@@ -80,18 +80,6 @@ const buildHistoryFilter = (query, userId, includeCompany) => {
   return filter;
 };
 
-// POST /api/wallet/topup
-// NOTE: no real payment gateway is wired up yet (JazzCash/EasyPaisa integration
-// is a separate, later piece of work). This stub simulates an already-successful
-// payment so the rest of the system (tax deduction, etc.) can be built and tested.
-const topup = asyncHandler(async (req, res) => {
-  const { amount, provider } = req.body;
-
-  const wallet = await creditWallet(req.user._id, 'main', amount, 'topup', { provider });
-
-  res.status(200).json(new ApiResponse(200, { wallet }, 'Wallet topped up successfully'));
-});
-
 // POST /api/tokens/activate
 // One-time Rs 100 payment that issues a shopper's first token.
 const activate = asyncHandler(async (req, res) => {
@@ -119,4 +107,4 @@ const companyWallet = asyncHandler(async (_req, res) => {
   res.status(200).json(new ApiResponse(200, { company }, 'Company wallet fetched successfully'));
 });
 
-module.exports = { myWallet, getHistory, getUserHistory, topup, activate, companyWallet };
+module.exports = { myWallet, getHistory, getUserHistory, activate, companyWallet };

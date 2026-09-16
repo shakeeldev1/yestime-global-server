@@ -1,11 +1,10 @@
 const { body, query } = require('express-validator');
 
-const topupValidator = [
+const manualPaymentValidator = [
   body('amount').isFloat({ gt: 0 }).withMessage('Amount must be a positive number'),
-  body('provider')
-    .optional()
-    .isIn(['jazzcash', 'easypaisa'])
-    .withMessage('Provider must be jazzcash or easypaisa'),
+  body('provider').isIn(['easypaisa', 'jazzcash']).withMessage('Provider must be easypaisa or jazzcash'),
+  body('senderName').trim().notEmpty().withMessage('senderName is required'),
+  body('transactionReference').trim().notEmpty().withMessage('transactionReference is required'),
 ];
 
 const withdrawValidator = [
@@ -15,6 +14,10 @@ const withdrawValidator = [
 ];
 
 const rejectWithdrawalValidator = [
+  body('reason').optional().trim().isLength({ max: 500 }).withMessage('reason must be under 500 characters'),
+];
+
+const rejectPaymentValidator = [
   body('reason').optional().trim().isLength({ max: 500 }).withMessage('reason must be under 500 characters'),
 ];
 
@@ -45,4 +48,10 @@ const walletHistoryValidator = [
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
 ];
 
-module.exports = { topupValidator, withdrawValidator, rejectWithdrawalValidator, walletHistoryValidator };
+module.exports = {
+  manualPaymentValidator,
+  withdrawValidator,
+  rejectWithdrawalValidator,
+  rejectPaymentValidator,
+  walletHistoryValidator,
+};

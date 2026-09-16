@@ -27,6 +27,10 @@ var require_env = __commonJS({
       SMTP_USER: process.env.SMTP_USER,
       SMTP_PASS: process.env.SMTP_PASS,
       MAIL_FROM: process.env.MAIL_FROM || "No Reply <no-reply@example.com>",
+      ADMIN_EMAIL: process.env.ADMIN_EMAIL || "info@yestimeglobal.com",
+      CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+      CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+      CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
       OTP_EXPIRES_IN_MINUTES: Number(process.env.OTP_EXPIRES_IN_MINUTES) || 10,
       ENABLE_DRAW_SCHEDULER: process.env.ENABLE_DRAW_SCHEDULER !== "false",
       // ~1,400 draws/day by default (86400s / 1400 ≈ 62s between draws).
@@ -333,7 +337,13 @@ var require_mailer = __commonJS({
         html: otpEmailTemplate({ name, otp, purposeText })
       });
     };
-    module2.exports = { sendMail, sendOtpEmail };
+    var notifyAdmin = async ({ subject, html }) => {
+      await sendMail({ to: env2.ADMIN_EMAIL, subject, html });
+    };
+    var notifyUser = async ({ to, subject, html }) => {
+      await sendMail({ to, subject, html });
+    };
+    module2.exports = { sendMail, sendOtpEmail, notifyAdmin, notifyUser };
   }
 });
 
@@ -1046,7 +1056,7 @@ var require_wallet_controller = __commonJS({
     var CompanyWallet = require_companyWallet_model();
     var WalletTransaction = require_walletTransaction_model();
     var mongoose = require("mongoose");
-    var { getOrCreateWallet, creditWallet, creditCompanyWallet } = require_wallet_service();
+    var { getOrCreateWallet, creditCompanyWallet } = require_wallet_service();
     var { createTokenForOwner } = require_token_service();
     var ACTIVATION_FEE = 100;
     var myWallet = asyncHandler(async (req, res) => {
@@ -1107,11 +1117,6 @@ var require_wallet_controller = __commonJS({
       if (query.type) filter.type = query.type;
       return filter;
     };
-    var topup = asyncHandler(async (req, res) => {
-      const { amount, provider } = req.body;
-      const wallet = await creditWallet(req.user._id, "main", amount, "topup", { provider });
-      res.status(200).json(new ApiResponse(200, { wallet }, "Wallet topped up successfully"));
-    });
     var activate = asyncHandler(async (req, res) => {
       if (req.user.role !== "shopper") {
         throw new ApiError(403, "Only shopper accounts can activate a token");
@@ -1128,7 +1133,249 @@ var require_wallet_controller = __commonJS({
       const company = await CompanyWallet.getSingleton();
       res.status(200).json(new ApiResponse(200, { company }, "Company wallet fetched successfully"));
     });
-    module2.exports = { myWallet, getHistory, getUserHistory, topup, activate, companyWallet };
+    module2.exports = { myWallet, getHistory, getUserHistory, activate, companyWallet };
+  }
+});
+
+// src/models/manualPayment.model.js
+var require_manualPayment_model = __commonJS({
+  "src/models/manualPayment.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var manualPaymentSchema = new mongoose.Schema(
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true
+        },
+        amount: {
+          type: Number,
+          required: true,
+          min: 0.01
+        },
+        provider: {
+          type: String,
+          enum: ["easypaisa", "jazzcash"],
+          required: true
+        },
+        senderName: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        transactionReference: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        proofPath: {
+          type: String,
+          required: true
+        },
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending"
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          default: null,
+          trim: true
+        }
+      },
+      { timestamps: true }
+    );
+    manualPaymentSchema.index({ status: 1, createdAt: -1 });
+    module2.exports = mongoose.model("ManualPayment", manualPaymentSchema);
+  }
+});
+
+// src/lib/cloudinary.js
+var require_cloudinary = __commonJS({
+  "src/lib/cloudinary.js"(exports2, module2) {
+    var { v2: cloudinary } = require("cloudinary");
+    var env2 = require_env();
+    if (env2.CLOUDINARY_CLOUD_NAME && env2.CLOUDINARY_API_KEY && env2.CLOUDINARY_API_SECRET) {
+      cloudinary.config({
+        cloud_name: env2.CLOUDINARY_CLOUD_NAME,
+        api_key: env2.CLOUDINARY_API_KEY,
+        api_secret: env2.CLOUDINARY_API_SECRET
+      });
+    }
+    var uploadImageBuffer = (buffer, options = {}) => {
+      if (!env2.CLOUDINARY_CLOUD_NAME || !env2.CLOUDINARY_API_KEY || !env2.CLOUDINARY_API_SECRET) {
+        const error = new Error("Cloudinary is not configured");
+        error.statusCode = 503;
+        throw error;
+      }
+      return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "yestime-global/payment-proofs", resource_type: "image", ...options },
+          (error, result) => error ? reject(error) : resolve(result)
+        );
+        stream.end(buffer);
+      });
+    };
+    module2.exports = { uploadImageBuffer };
+  }
+});
+
+// src/controllers/payment.controller.js
+var require_payment_controller = __commonJS({
+  "src/controllers/payment.controller.js"(exports2, module2) {
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var ManualPayment = require_manualPayment_model();
+    var User = require_user_model();
+    var { creditWallet } = require_wallet_service();
+    var { uploadImageBuffer } = require_cloudinary();
+    var { notifyAdmin, notifyUser } = require_mailer();
+    var paymentInstructions = asyncHandler(async (_req, res) => {
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            provider: "easypaisa",
+            accountNumber: "03068509086",
+            accountName: "\u0627\u0645\u0627\u0646\u062A \u0639\u0644\u06CC",
+            note: "Send the payment, then submit the transaction reference and screenshot for review."
+          },
+          "Manual payment instructions fetched successfully"
+        )
+      );
+    });
+    var submitPayment = asyncHandler(async (req, res) => {
+      const { amount, provider, senderName, transactionReference } = req.body;
+      if (!req.file) {
+        throw new ApiError(422, "Payment screenshot is required");
+      }
+      const uploadedProof = await uploadImageBuffer(req.file.buffer, {
+        public_id: `payment-${req.user._id}-${Date.now()}`
+      });
+      const payment = await ManualPayment.create({
+        user: req.user._id,
+        amount: Number(amount),
+        provider,
+        senderName,
+        transactionReference,
+        proofPath: uploadedProof.secure_url
+      });
+      const pendingSubject = `Payment request received: PKR ${payment.amount}`;
+      const pendingHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Payment request received</h2>
+      <p>Your payment request for <strong>PKR ${payment.amount}</strong> is pending admin review.</p>
+      <p>Transaction reference: ${payment.transactionReference}</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({
+          subject: `New wallet payment request: PKR ${payment.amount}`,
+          html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+        <h2>New wallet payment request</h2>
+        <p>A user submitted a manual payment that needs review.</p>
+        <table cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>User</strong></td><td>${req.user.name} (${req.user.email})</td></tr>
+          <tr><td><strong>Amount</strong></td><td>PKR ${payment.amount}</td></tr>
+          <tr><td><strong>Provider</strong></td><td>${payment.provider}</td></tr>
+          <tr><td><strong>Sender</strong></td><td>${payment.senderName}</td></tr>
+          <tr><td><strong>Reference</strong></td><td>${payment.transactionReference}</td></tr>
+        </table>
+        <p><a href="${payment.proofPath}">Open payment screenshot</a></p>
+        <p>Review this request in the admin dashboard before crediting the main wallet.</p>
+      </div>
+    `
+        }),
+        notifyUser({ to: req.user.email, subject: pendingSubject, html: pendingHtml })
+      ]).catch((error) => console.error("Failed to notify payment request parties:", error.message));
+      res.status(201).json(new ApiResponse(201, { payment }, "Payment submitted for admin review"));
+    });
+    var myPayments = asyncHandler(async (req, res) => {
+      const payments = await ManualPayment.find({ user: req.user._id }).sort({ createdAt: -1 });
+      res.status(200).json(new ApiResponse(200, { payments }, "Payment requests fetched successfully"));
+    });
+    var listPayments = asyncHandler(async (req, res) => {
+      const filter = {};
+      if (req.query.status) filter.status = req.query.status;
+      const payments = await ManualPayment.find(filter).sort({ createdAt: -1 }).populate({ path: "user", select: "name email" });
+      res.status(200).json(new ApiResponse(200, { payments }, "Payment requests fetched successfully"));
+    });
+    var findPendingPayment = async (id) => {
+      const payment = await ManualPayment.findById(id).populate({ path: "user", select: "name email" });
+      if (!payment) throw new ApiError(404, "Payment request not found");
+      if (payment.status !== "pending") {
+        throw new ApiError(400, `This payment request is already ${payment.status}`);
+      }
+      return payment;
+    };
+    var approvePayment = asyncHandler(async (req, res) => {
+      const payment = await findPendingPayment(req.params.id);
+      await creditWallet(payment.user._id, "main", payment.amount, "topup", {
+        manualPaymentId: payment._id,
+        provider: payment.provider,
+        transactionReference: payment.transactionReference,
+        reviewedBy: req.user._id
+      });
+      payment.status = "approved";
+      payment.reviewedBy = req.user._id;
+      payment.reviewedAt = /* @__PURE__ */ new Date();
+      await payment.save();
+      const subject = `Payment approved: PKR ${payment.amount}`;
+      const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Payment approved</h2>
+      <p>Payment request for <strong>PKR ${payment.amount}</strong> has been approved.</p>
+      <p>The amount has been added to your main wallet.</p>
+      <p>Transaction reference: ${payment.transactionReference}</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({ subject, html: `<p>Payment approved by ${req.user.name} for ${payment.user.email}.</p>${html}` }),
+        notifyUser({ to: payment.user.email, subject, html })
+      ]).catch((error) => console.error("Failed to notify payment status change:", error.message));
+      res.status(200).json(new ApiResponse(200, { payment }, "Payment approved and main wallet credited"));
+    });
+    var rejectPayment = asyncHandler(async (req, res) => {
+      const payment = await findPendingPayment(req.params.id);
+      payment.status = "rejected";
+      payment.reviewedBy = req.user._id;
+      payment.reviewedAt = /* @__PURE__ */ new Date();
+      payment.rejectionReason = req.body.reason || null;
+      await payment.save();
+      const subject = `Payment rejected: PKR ${payment.amount}`;
+      const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Payment request rejected</h2>
+      <p>Your payment request for <strong>PKR ${payment.amount}</strong> was rejected.</p>
+      <p>Reason: ${payment.rejectionReason || "The payment could not be verified."}</p>
+      <p>The wallet was not credited.</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({ subject, html: `<p>Payment rejected by ${req.user.name} for ${payment.user.email}.</p>${html}` }),
+        notifyUser({ to: payment.user.email, subject, html })
+      ]).catch((error) => console.error("Failed to notify payment status change:", error.message));
+      res.status(200).json(new ApiResponse(200, { payment }, "Payment rejected"));
+    });
+    module2.exports = {
+      paymentInstructions,
+      submitPayment,
+      myPayments,
+      listPayments,
+      approvePayment,
+      rejectPayment
+    };
   }
 });
 
@@ -1194,6 +1441,7 @@ var require_withdrawal_controller = __commonJS({
     var ApiResponse = require_ApiResponse();
     var Withdrawal = require_withdrawal_model();
     var { debitWallet, creditWallet } = require_wallet_service();
+    var { notifyAdmin, notifyUser } = require_mailer();
     var requestWithdrawal = asyncHandler(async (req, res) => {
       const { amount, method, accountDetails } = req.body;
       await debitWallet(req.user._id, "main", amount, "withdrawal", { method, accountDetails });
@@ -1203,6 +1451,33 @@ var require_withdrawal_controller = __commonJS({
         method,
         accountDetails
       });
+      const pendingSubject = `Withdrawal request received: PKR ${withdrawal.amount}`;
+      const pendingHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal request received</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> is pending admin review.</p>
+      <p>The amount has been reserved from your main wallet until the request is completed or rejected.</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({
+          subject: `New withdrawal request: PKR ${withdrawal.amount}`,
+          html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+        <h2>New withdrawal request</h2>
+        <p>A user submitted a withdrawal request that needs review and manual payout.</p>
+        <table cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>User</strong></td><td>${req.user.name} (${req.user.email})</td></tr>
+          <tr><td><strong>Amount</strong></td><td>PKR ${withdrawal.amount}</td></tr>
+          <tr><td><strong>Method</strong></td><td>${withdrawal.method}</td></tr>
+          <tr><td><strong>Account details</strong></td><td>${withdrawal.accountDetails}</td></tr>
+        </table>
+        <p>Send the money manually, then mark the request as completed in the admin dashboard.</p>
+      </div>
+    `
+        }),
+        notifyUser({ to: req.user.email, subject: pendingSubject, html: pendingHtml })
+      ]).catch((error) => console.error("Failed to notify withdrawal request parties:", error.message));
       res.status(201).json(new ApiResponse(201, { withdrawal }, "Withdrawal request submitted, pending processing"));
     });
     var myWithdrawals = asyncHandler(async (req, res) => {
@@ -1216,7 +1491,7 @@ var require_withdrawal_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, { withdrawals }, "Withdrawals fetched successfully"));
     });
     var findPendingWithdrawal = async (id) => {
-      const withdrawal = await Withdrawal.findById(id);
+      const withdrawal = await Withdrawal.findById(id).populate({ path: "user", select: "name email" });
       if (!withdrawal) {
         throw new ApiError(404, "Withdrawal request not found");
       }
@@ -1231,11 +1506,23 @@ var require_withdrawal_controller = __commonJS({
       withdrawal.processedBy = req.user._id;
       withdrawal.processedAt = /* @__PURE__ */ new Date();
       await withdrawal.save();
+      const subject = `Withdrawal completed: PKR ${withdrawal.amount}`;
+      const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal completed</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> has been marked as completed.</p>
+      <p>The payout was sent through ${withdrawal.method} to ${withdrawal.accountDetails}.</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({ subject, html: `<p>Withdrawal completed by ${req.user.name} for ${withdrawal.user.email}.</p>${html}` }),
+        notifyUser({ to: withdrawal.user.email, subject, html })
+      ]).catch((error) => console.error("Failed to notify withdrawal status change:", error.message));
       res.status(200).json(new ApiResponse(200, { withdrawal }, "Withdrawal marked as completed"));
     });
     var rejectWithdrawal = asyncHandler(async (req, res) => {
       const withdrawal = await findPendingWithdrawal(req.params.id);
-      await creditWallet(withdrawal.user, "main", withdrawal.amount, "withdrawal", {
+      await creditWallet(withdrawal.user._id, "main", withdrawal.amount, "withdrawal", {
         reversalOf: withdrawal._id
       });
       withdrawal.status = "rejected";
@@ -1243,6 +1530,19 @@ var require_withdrawal_controller = __commonJS({
       withdrawal.processedAt = /* @__PURE__ */ new Date();
       withdrawal.rejectionReason = req.body.reason || null;
       await withdrawal.save();
+      const subject = `Withdrawal rejected: PKR ${withdrawal.amount}`;
+      const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal request rejected</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> was rejected.</p>
+      <p>Reason: ${withdrawal.rejectionReason || "The payout details could not be verified."}</p>
+      <p>The amount has been refunded to your main wallet.</p>
+    </div>
+  `;
+      Promise.all([
+        notifyAdmin({ subject, html: `<p>Withdrawal rejected by ${req.user.name} for ${withdrawal.user.email}.</p>${html}` }),
+        notifyUser({ to: withdrawal.user.email, subject, html })
+      ]).catch((error) => console.error("Failed to notify withdrawal status change:", error.message));
       res.status(200).json(new ApiResponse(200, { withdrawal }, "Withdrawal rejected and amount refunded to wallet"));
     });
     module2.exports = {
@@ -1259,9 +1559,11 @@ var require_withdrawal_controller = __commonJS({
 var require_wallet_validator = __commonJS({
   "src/validators/wallet.validator.js"(exports2, module2) {
     var { body, query } = require("express-validator");
-    var topupValidator = [
+    var manualPaymentValidator = [
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number"),
-      body("provider").optional().isIn(["jazzcash", "easypaisa"]).withMessage("Provider must be jazzcash or easypaisa")
+      body("provider").isIn(["easypaisa", "jazzcash"]).withMessage("Provider must be easypaisa or jazzcash"),
+      body("senderName").trim().notEmpty().withMessage("senderName is required"),
+      body("transactionReference").trim().notEmpty().withMessage("transactionReference is required")
     ];
     var withdrawValidator = [
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number"),
@@ -1269,6 +1571,9 @@ var require_wallet_validator = __commonJS({
       body("accountDetails").trim().notEmpty().withMessage("accountDetails is required")
     ];
     var rejectWithdrawalValidator = [
+      body("reason").optional().trim().isLength({ max: 500 }).withMessage("reason must be under 500 characters")
+    ];
+    var rejectPaymentValidator = [
       body("reason").optional().trim().isLength({ max: 500 }).withMessage("reason must be under 500 characters")
     ];
     var walletHistoryValidator = [
@@ -1288,7 +1593,31 @@ var require_wallet_validator = __commonJS({
       query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
       query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
     ];
-    module2.exports = { topupValidator, withdrawValidator, rejectWithdrawalValidator, walletHistoryValidator };
+    module2.exports = {
+      manualPaymentValidator,
+      withdrawValidator,
+      rejectWithdrawalValidator,
+      rejectPaymentValidator,
+      walletHistoryValidator
+    };
+  }
+});
+
+// src/middlewares/paymentUpload.js
+var require_paymentUpload = __commonJS({
+  "src/middlewares/paymentUpload.js"(exports2, module2) {
+    var multer = require("multer");
+    var uploadPaymentProof = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, callback) => {
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) {
+          return callback(new Error("Payment proof must be a JPG, PNG or WEBP image"));
+        }
+        callback(null, true);
+      }
+    });
+    module2.exports = { uploadPaymentProof };
   }
 });
 
@@ -1296,7 +1625,12 @@ var require_wallet_validator = __commonJS({
 var require_wallet_routes = __commonJS({
   "src/routes/wallet.routes.js"(exports2, module2) {
     var express = require("express");
-    var { myWallet, getHistory, getUserHistory, topup, companyWallet } = require_wallet_controller();
+    var { myWallet, getHistory, getUserHistory, companyWallet } = require_wallet_controller();
+    var {
+      paymentInstructions,
+      submitPayment,
+      myPayments
+    } = require_payment_controller();
     var {
       requestWithdrawal,
       myWithdrawals,
@@ -1305,18 +1639,21 @@ var require_wallet_routes = __commonJS({
       rejectWithdrawal
     } = require_withdrawal_controller();
     var {
-      topupValidator,
+      manualPaymentValidator,
       withdrawValidator,
       rejectWithdrawalValidator,
       walletHistoryValidator
     } = require_wallet_validator();
     var validate = require_validate_middleware();
+    var { uploadPaymentProof } = require_paymentUpload();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
     router.get("/me", authenticate, myWallet);
     router.get("/history", authenticate, walletHistoryValidator, validate, getHistory);
     router.get("/history/:userId", authenticate, authorize("admin"), walletHistoryValidator, validate, getUserHistory);
-    router.post("/topup", authenticate, topupValidator, validate, topup);
+    router.get("/payment-instructions", authenticate, paymentInstructions);
+    router.post("/payments", authenticate, uploadPaymentProof.single("screenshot"), manualPaymentValidator, validate, submitPayment);
+    router.get("/payments/me", authenticate, myPayments);
     router.get("/company", authenticate, authorize("admin"), companyWallet);
     router.post("/withdraw", authenticate, withdrawValidator, validate, requestWithdrawal);
     router.get("/withdrawals/me", authenticate, myWithdrawals);
@@ -2260,11 +2597,17 @@ var require_admin_routes = __commonJS({
       getStats
     } = require_admin_controller();
     var {
+      listPayments,
+      approvePayment,
+      rejectPayment
+    } = require_payment_controller();
+    var {
       listUsersValidator,
       createUserValidator,
       updateUserValidator,
       creditWalletValidator
     } = require_admin_validator();
+    var { rejectPaymentValidator } = require_wallet_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
@@ -2278,6 +2621,9 @@ var require_admin_routes = __commonJS({
     router.post("/users/:id/unblock", unblockUser);
     router.delete("/users/:id", deleteUser);
     router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
+    router.get("/payments", listPayments);
+    router.post("/payments/:id/approve", approvePayment);
+    router.post("/payments/:id/reject", rejectPaymentValidator, validate, rejectPayment);
     module2.exports = router;
   }
 });

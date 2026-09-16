@@ -338,7 +338,7 @@ Request body:
 ```
 `category` must be `"property" | "car" | "bike"` — this endpoint doesn't cover `shop` purchases (those always go through a shopkeeper's `POST /purchases`).
 
-Same mechanics as above, except: a fixed 1% company commission is debited from **the shopper's own main wallet** (no dealer involved, so no dealer commission at all — `dealerCommissionAmount` is always `0`), and the resulting purchase has `channel: "self"`, `shopkeeper: null`. The shopper needs enough main wallet balance to cover that 1% themselves (top up via `POST /wallet/topup` first).
+Same mechanics as above, except: a fixed 1% company commission is debited from **the shopper's own main wallet** (no dealer involved, so no dealer commission at all — `dealerCommissionAmount` is always `0`), and the resulting purchase has `channel: "self"`, `shopkeeper: null`. The shopper needs enough main wallet balance to cover that 1% themselves (submit a manual payment and wait for admin approval first).
 
 Errors: `400` if the shopper has no active token yet (activate one first), `400` if their wallet can't cover the 1% (top up), `422` if `category` isn't one of the three allowed values.
 
@@ -383,11 +383,37 @@ Returns paginated wallet transactions for a selected user. Supports the same
 filters as `/wallet/history`, including `wallet=company` for company-credit
 records associated with that user.
 
-### `POST /wallet/topup` 🔒
+### `GET /wallet/payment-instructions` 🔒
 
-Request body: `{ "amount": 1000, "provider": "jazzcash" }` (`provider` is `"jazzcash"` or `"easypaisa"`, optional).
+Returns the current manual deposit account: EasyPaisa `03068509086`, account
+name `امانت علی`. The user should transfer funds first, then submit the proof.
 
-⚠️ **No real payment gateway is wired up yet.** This endpoint currently credits `mainBalance` immediately, as if payment already succeeded — it's a placeholder so the rest of the flow (shopkeeper tax deduction, etc.) is testable. Real JazzCash/EasyPaisa integration is separate, later work; don't build frontend UI that assumes this is a real charge yet.
+### `POST /wallet/payments` 🔒
+
+Submit a manual main-wallet deposit as `multipart/form-data` with fields
+`amount`, `provider` (`easypaisa` or `jazzcash`), `senderName`,
+`transactionReference`, and an image file named `screenshot` (JPG, PNG, or
+WEBP, maximum 5 MB). The image is uploaded to Cloudinary and the request is
+created with `status: "pending"`; the wallet is not credited yet.
+
+### `GET /wallet/payments/me` 🔒
+
+Returns the authenticated user's manual payment requests and their statuses.
+
+### `GET /admin/payments` 🔒 (admin only)
+
+Lists manual payment requests with the requesting user's name and email.
+Optional `?status=pending|approved|rejected` filter.
+
+### `POST /admin/payments/:id/approve` 🔒 (admin only)
+
+Approves a pending payment and credits its amount to the user's **main wallet**
+as an auditable `topup` wallet transaction. A request cannot be approved twice.
+
+### `POST /admin/payments/:id/reject` 🔒 (admin only)
+
+Request body (optional): `{ "reason": "Could not verify transfer" }`. Rejects
+the pending request without changing the wallet.
 
 ### `GET /wallet/company` 🔒 (admin only)
 
@@ -555,7 +581,9 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | GET | `/wallet/me` | Yes | Get my wallet balances |
 | GET | `/wallet/history` | Yes | Get my paginated wallet transaction history |
 | GET | `/wallet/history/:userId` | Yes (admin) | Get a user's wallet transaction history |
-| POST | `/wallet/topup` | Yes | Top up main wallet (placeholder, no real gateway yet) |
+| GET | `/wallet/payment-instructions` | Yes | Get the manual deposit account |
+| POST | `/wallet/payments` | Yes | Submit a Cloudinary-backed payment screenshot for review |
+| GET | `/wallet/payments/me` | Yes | List my manual payment requests |
 | GET | `/wallet/company` | Yes (admin) | Get company wallet balance |
 | POST | `/wallet/withdraw` | Yes | Request a payout from my main wallet |
 | GET | `/wallet/withdrawals/me` | Yes | List my withdrawal requests |
@@ -573,6 +601,9 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | GET | `/admin/stats` | Yes (admin) | Dashboard overview counts |
 | GET | `/admin/users` | Yes (admin) | List/search/filter users, paginated |
 | GET | `/admin/users/:id` | Yes (admin) | Get one user + wallet/token/purchase counts |
+| GET | `/admin/payments` | Yes (admin) | List manual payment requests |
+| POST | `/admin/payments/:id/approve` | Yes (admin) | Approve and credit a manual payment |
+| POST | `/admin/payments/:id/reject` | Yes (admin) | Reject a manual payment |
 | POST | `/admin/users` | Yes (admin) | Create a user directly (any role, pre-verified) |
 | PATCH | `/admin/users/:id` | Yes (admin) | Update name/role/businessType/taxRate |
 | POST | `/admin/users/:id/block` | Yes (admin) | Block a user (blocks login) |
@@ -583,4 +614,4 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 ## Not built yet
 
 Everything from the business spec is implemented **except** the real payment gateway, which is deliberately on hold:
-- Real **JazzCash/EasyPaisa payment gateway** integration. `POST /wallet/topup` is a stub that credits the wallet immediately, as if payment already succeeded — don't build frontend UI that assumes a real charge happens. Withdrawals (above) are real business logic, not a stub, but the *payout* leg is still manual (admin-processed) rather than automated through a gateway.
+- Real-time **JazzCash/EasyPaisa gateway** integration remains separate. Deposits now use manual proof review and Cloudinary-hosted screenshots. Withdrawals are manually paid by an admin after approval.

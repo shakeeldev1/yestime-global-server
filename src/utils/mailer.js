@@ -44,4 +44,12 @@ const sendOtpEmail = async ({ to, name, otp, purpose }) => {
   });
 };
 
-module.exports = { sendMail, sendOtpEmail };
+const notifyAdmin = async ({ subject, html }) => {
+  await sendMail({ to: env.ADMIN_EMAIL, subject, html });
+};
+
+const notifyUser = async ({ to, subject, html }) => {
+  await sendMail({ to, subject, html });
+};
+
+module.exports = { sendMail, sendOtpEmail, notifyAdmin, notifyUser };

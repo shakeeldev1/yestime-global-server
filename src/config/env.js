@@ -22,6 +22,11 @@ const env = {
   SMTP_USER: process.env.SMTP_USER,
   SMTP_PASS: process.env.SMTP_PASS,
   MAIL_FROM: process.env.MAIL_FROM || 'No Reply <no-reply@example.com>',
+  ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'info@yestimeglobal.com',
+
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
 
   OTP_EXPIRES_IN_MINUTES: Number(process.env.OTP_EXPIRES_IN_MINUTES) || 10,
 

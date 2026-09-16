@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const Withdrawal = require('../models/withdrawal.model');
 const { debitWallet, creditWallet } = require('../services/wallet.service');
+const { notifyAdmin, notifyUser } = require('../utils/mailer');
 
 // POST /api/wallet/withdraw
 // No real payout gateway is wired up yet — the requested amount is debited
@@ -21,6 +22,34 @@ const requestWithdrawal = asyncHandler(async (req, res) => {
     method,
     accountDetails,
   });
+
+  const pendingSubject = `Withdrawal request received: PKR ${withdrawal.amount}`;
+  const pendingHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal request received</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> is pending admin review.</p>
+      <p>The amount has been reserved from your main wallet until the request is completed or rejected.</p>
+    </div>
+  `;
+  Promise.all([
+    notifyAdmin({
+      subject: `New withdrawal request: PKR ${withdrawal.amount}`,
+      html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+        <h2>New withdrawal request</h2>
+        <p>A user submitted a withdrawal request that needs review and manual payout.</p>
+        <table cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+          <tr><td><strong>User</strong></td><td>${req.user.name} (${req.user.email})</td></tr>
+          <tr><td><strong>Amount</strong></td><td>PKR ${withdrawal.amount}</td></tr>
+          <tr><td><strong>Method</strong></td><td>${withdrawal.method}</td></tr>
+          <tr><td><strong>Account details</strong></td><td>${withdrawal.accountDetails}</td></tr>
+        </table>
+        <p>Send the money manually, then mark the request as completed in the admin dashboard.</p>
+      </div>
+    `,
+    }),
+    notifyUser({ to: req.user.email, subject: pendingSubject, html: pendingHtml }),
+  ]).catch((error) => console.error('Failed to notify withdrawal request parties:', error.message));
 
   res
     .status(201)
@@ -46,7 +75,7 @@ const listWithdrawals = asyncHandler(async (req, res) => {
 });
 
 const findPendingWithdrawal = async (id) => {
-  const withdrawal = await Withdrawal.findById(id);
+  const withdrawal = await Withdrawal.findById(id).populate({ path: 'user', select: 'name email' });
   if (!withdrawal) {
     throw new ApiError(404, 'Withdrawal request not found');
   }
@@ -65,6 +94,19 @@ const completeWithdrawal = asyncHandler(async (req, res) => {
   withdrawal.processedAt = new Date();
   await withdrawal.save();
 
+  const subject = `Withdrawal completed: PKR ${withdrawal.amount}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal completed</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> has been marked as completed.</p>
+      <p>The payout was sent through ${withdrawal.method} to ${withdrawal.accountDetails}.</p>
+    </div>
+  `;
+  Promise.all([
+    notifyAdmin({ subject, html: `<p>Withdrawal completed by ${req.user.name} for ${withdrawal.user.email}.</p>${html}` }),
+    notifyUser({ to: withdrawal.user.email, subject, html }),
+  ]).catch((error) => console.error('Failed to notify withdrawal status change:', error.message));
+
   res.status(200).json(new ApiResponse(200, { withdrawal }, 'Withdrawal marked as completed'));
 });
 
@@ -72,7 +114,7 @@ const completeWithdrawal = asyncHandler(async (req, res) => {
 const rejectWithdrawal = asyncHandler(async (req, res) => {
   const withdrawal = await findPendingWithdrawal(req.params.id);
 
-  await creditWallet(withdrawal.user, 'main', withdrawal.amount, 'withdrawal', {
+  await creditWallet(withdrawal.user._id, 'main', withdrawal.amount, 'withdrawal', {
     reversalOf: withdrawal._id,
   });
 
@@ -81,6 +123,20 @@ const rejectWithdrawal = asyncHandler(async (req, res) => {
   withdrawal.processedAt = new Date();
   withdrawal.rejectionReason = req.body.reason || null;
   await withdrawal.save();
+
+  const subject = `Withdrawal rejected: PKR ${withdrawal.amount}`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 620px; margin: auto;">
+      <h2>Withdrawal request rejected</h2>
+      <p>Your withdrawal request for <strong>PKR ${withdrawal.amount}</strong> was rejected.</p>
+      <p>Reason: ${withdrawal.rejectionReason || 'The payout details could not be verified.'}</p>
+      <p>The amount has been refunded to your main wallet.</p>
+    </div>
+  `;
+  Promise.all([
+    notifyAdmin({ subject, html: `<p>Withdrawal rejected by ${req.user.name} for ${withdrawal.user.email}.</p>${html}` }),
+    notifyUser({ to: withdrawal.user.email, subject, html }),
+  ]).catch((error) => console.error('Failed to notify withdrawal status change:', error.message));
 
   res
     .status(200)

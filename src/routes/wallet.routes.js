@@ -1,5 +1,10 @@
 const express = require('express');
-const { myWallet, getHistory, getUserHistory, topup, companyWallet } = require('../controllers/wallet.controller');
+const { myWallet, getHistory, getUserHistory, companyWallet } = require('../controllers/wallet.controller');
+const {
+  paymentInstructions,
+  submitPayment,
+  myPayments,
+} = require('../controllers/payment.controller');
 const {
   requestWithdrawal,
   myWithdrawals,
@@ -8,12 +13,13 @@ const {
   rejectWithdrawal,
 } = require('../controllers/withdrawal.controller');
 const {
-  topupValidator,
+  manualPaymentValidator,
   withdrawValidator,
   rejectWithdrawalValidator,
   walletHistoryValidator,
 } = require('../validators/wallet.validator');
 const validate = require('../middlewares/validate.middleware');
+const { uploadPaymentProof } = require('../middlewares/paymentUpload');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
@@ -21,7 +27,9 @@ const router = express.Router();
 router.get('/me', authenticate, myWallet);
 router.get('/history', authenticate, walletHistoryValidator, validate, getHistory);
 router.get('/history/:userId', authenticate, authorize('admin'), walletHistoryValidator, validate, getUserHistory);
-router.post('/topup', authenticate, topupValidator, validate, topup);
+router.get('/payment-instructions', authenticate, paymentInstructions);
+router.post('/payments', authenticate, uploadPaymentProof.single('screenshot'), manualPaymentValidator, validate, submitPayment);
+router.get('/payments/me', authenticate, myPayments);
 router.get('/company', authenticate, authorize('admin'), companyWallet);
 
 router.post('/withdraw', authenticate, withdrawValidator, validate, requestWithdrawal);
