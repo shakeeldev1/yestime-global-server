@@ -17,6 +17,7 @@ var require_env = __commonJS({
       PORT: process.env.PORT || 5e3,
       MONGO_URI: process.env.MONGO_URI,
       CLIENT_URL: process.env.CLIENT_URL || "http://localhost:3000",
+      CORS_ORIGINS: (process.env.CORS_ORIGINS || process.env.CLIENT_URL || "http://localhost:3000").split(",").map((origin) => origin.trim()).filter(Boolean),
       JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
       JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
       JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET,
@@ -2834,13 +2835,18 @@ var require_app = __commonJS({
     var routes = require_routes();
     var { notFound, errorHandler } = require_error_middleware();
     var app2 = express();
+    var corsOptions = {
+      origin: (requestOrigin, callback) => {
+        if (!requestOrigin || env2.CORS_ORIGINS.includes(requestOrigin)) {
+          return callback(null, true);
+        }
+        return callback(new Error(`CORS origin not allowed: ${requestOrigin}`));
+      },
+      credentials: true
+    };
     app2.use(helmet());
-    app2.use(
-      cors({
-        origin: "*",
-        credentials: true
-      })
-    );
+    app2.use(cors(corsOptions));
+    app2.options("*", cors(corsOptions));
     app2.use(express.json());
     app2.use(express.urlencoded({ extended: true }));
     app2.use(cookieParser());

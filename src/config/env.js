@@ -9,6 +9,10 @@ const env = {
   MONGO_URI: process.env.MONGO_URI,
 
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:3000',
+  CORS_ORIGINS: (process.env.CORS_ORIGINS || process.env.CLIENT_URL || 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 
   JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET,
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',

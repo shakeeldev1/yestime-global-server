@@ -10,13 +10,19 @@ const { notFound, errorHandler } = require('./middlewares/error.middleware');
 
 const app = express();
 
+const corsOptions = {
+  origin: (requestOrigin, callback) => {
+    if (!requestOrigin || env.CORS_ORIGINS.includes(requestOrigin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS origin not allowed: ${requestOrigin}`));
+  },
+  credentials: true,
+};
+
 app.use(helmet());
-app.use(
-  cors({
-    origin: "*",
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
