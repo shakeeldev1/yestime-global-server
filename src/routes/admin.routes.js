@@ -7,9 +7,15 @@ const {
   blockUser,
   unblockUser,
   deleteUser,
+  creditUserWallet,
   getStats,
 } = require('../controllers/admin.controller');
-const { listUsersValidator, createUserValidator, updateUserValidator } = require('../validators/admin.validator');
+const {
+  listUsersValidator,
+  createUserValidator,
+  updateUserValidator,
+  creditWalletValidator,
+} = require('../validators/admin.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
@@ -26,5 +32,6 @@ router.patch('/users/:id', updateUserValidator, validate, updateUser);
 router.post('/users/:id/block', blockUser);
 router.post('/users/:id/unblock', unblockUser);
 router.delete('/users/:id', deleteUser);
+router.post('/users/:id/wallet-credit', creditWalletValidator, validate, creditUserWallet);
 
 module.exports = router;

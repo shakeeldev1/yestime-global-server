@@ -8,6 +8,7 @@ const Purchase = require('../models/purchase.model');
 const Withdrawal = require('../models/withdrawal.model');
 const Draw = require('../models/draw.model');
 const CompanyWallet = require('../models/companyWallet.model');
+const { creditWallet } = require('../services/wallet.service');
 
 const paginate = (query) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -171,6 +172,25 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, null, 'User deleted successfully'));
 });
 
+// POST /api/admin/users/:id/wallet-credit
+const creditUserWallet = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id).select('_id name email');
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  const { wallet, note } = req.body;
+  const amount = Number(req.body.amount);
+  const updatedWallet = await creditWallet(user._id, wallet, amount, 'admin_credit', {
+    adminId: req.user._id,
+    note: note || undefined,
+  });
+
+  res.status(200).json(
+    new ApiResponse(200, { user, wallet: updatedWallet }, 'Wallet balance added successfully')
+  );
+});
+
 // GET /api/admin/stats
 const getStats = asyncHandler(async (req, res) => {
   const [
@@ -224,4 +244,14 @@ const getStats = asyncHandler(async (req, res) => {
   );
 });
 
-module.exports = { listUsers, getUser, createUser, updateUser, blockUser, unblockUser, deleteUser, getStats };
+module.exports = {
+  listUsers,
+  getUser,
+  createUser,
+  updateUser,
+  blockUser,
+  unblockUser,
+  deleteUser,
+  creditUserWallet,
+  getStats,
+};

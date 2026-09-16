@@ -2009,6 +2009,7 @@ var require_admin_controller = __commonJS({
     var Withdrawal = require_withdrawal_model();
     var Draw = require_draw_model();
     var CompanyWallet = require_companyWallet_model();
+    var { creditWallet } = require_wallet_service();
     var paginate = (query) => {
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -2130,6 +2131,21 @@ var require_admin_controller = __commonJS({
       if (wallet) await Wallet.deleteOne({ _id: wallet._id });
       res.status(200).json(new ApiResponse(200, null, "User deleted successfully"));
     });
+    var creditUserWallet = asyncHandler(async (req, res) => {
+      const user = await User.findById(req.params.id).select("_id name email");
+      if (!user) {
+        throw new ApiError(404, "User not found");
+      }
+      const { wallet, note } = req.body;
+      const amount = Number(req.body.amount);
+      const updatedWallet = await creditWallet(user._id, wallet, amount, "admin_credit", {
+        adminId: req.user._id,
+        note: note || void 0
+      });
+      res.status(200).json(
+        new ApiResponse(200, { user, wallet: updatedWallet }, "Wallet balance added successfully")
+      );
+    });
     var getStats = asyncHandler(async (req, res) => {
       const [
         totalUsers,
@@ -2180,7 +2196,17 @@ var require_admin_controller = __commonJS({
         )
       );
     });
-    module2.exports = { listUsers, getUser, createUser, updateUser, blockUser, unblockUser, deleteUser, getStats };
+    module2.exports = {
+      listUsers,
+      getUser,
+      createUser,
+      updateUser,
+      blockUser,
+      unblockUser,
+      deleteUser,
+      creditUserWallet,
+      getStats
+    };
   }
 });
 
@@ -2209,7 +2235,12 @@ var require_admin_validator = __commonJS({
       body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
       body("taxRate").optional().isFloat({ min: 0, max: 100 }).withMessage("taxRate must be between 0 and 100")
     ];
-    module2.exports = { listUsersValidator, createUserValidator, updateUserValidator };
+    var creditWalletValidator = [
+      body("wallet").isIn(["main", "lottery"]).withMessage("wallet must be main or lottery"),
+      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0"),
+      body("note").optional().trim().isLength({ max: 200 }).withMessage("note must be 200 characters or fewer")
+    ];
+    module2.exports = { listUsersValidator, createUserValidator, updateUserValidator, creditWalletValidator };
   }
 });
 
@@ -2225,9 +2256,15 @@ var require_admin_routes = __commonJS({
       blockUser,
       unblockUser,
       deleteUser,
+      creditUserWallet,
       getStats
     } = require_admin_controller();
-    var { listUsersValidator, createUserValidator, updateUserValidator } = require_admin_validator();
+    var {
+      listUsersValidator,
+      createUserValidator,
+      updateUserValidator,
+      creditWalletValidator
+    } = require_admin_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
@@ -2240,6 +2277,7 @@ var require_admin_routes = __commonJS({
     router.post("/users/:id/block", blockUser);
     router.post("/users/:id/unblock", unblockUser);
     router.delete("/users/:id", deleteUser);
+    router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
     module2.exports = router;
   }
 });

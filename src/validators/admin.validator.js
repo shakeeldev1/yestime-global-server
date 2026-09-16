@@ -36,4 +36,10 @@ const updateUserValidator = [
   body('taxRate').optional().isFloat({ min: 0, max: 100 }).withMessage('taxRate must be between 0 and 100'),
 ];
 
-module.exports = { listUsersValidator, createUserValidator, updateUserValidator };
+const creditWalletValidator = [
+  body('wallet').isIn(['main', 'lottery']).withMessage('wallet must be main or lottery'),
+  body('amount').isFloat({ min: 0.01 }).withMessage('amount must be greater than 0'),
+  body('note').optional().trim().isLength({ max: 200 }).withMessage('note must be 200 characters or fewer'),
+];
+
+module.exports = { listUsersValidator, createUserValidator, updateUserValidator, creditWalletValidator };
