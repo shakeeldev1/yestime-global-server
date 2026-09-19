@@ -1057,7 +1057,7 @@ var require_wallet_controller = __commonJS({
     var CompanyWallet = require_companyWallet_model();
     var WalletTransaction = require_walletTransaction_model();
     var mongoose = require("mongoose");
-    var { getOrCreateWallet, creditCompanyWallet } = require_wallet_service();
+    var { getOrCreateWallet, debitWallet, creditCompanyWallet } = require_wallet_service();
     var { createTokenForOwner } = require_token_service();
     var ACTIVATION_FEE = 100;
     var myWallet = asyncHandler(async (req, res) => {
@@ -1125,6 +1125,11 @@ var require_wallet_controller = __commonJS({
       if (req.user.hasActivatedToken) {
         throw new ApiError(400, "Your account already has an active token");
       }
+      const wallet = await getOrCreateWallet(req.user._id);
+      if (wallet.mainBalance < ACTIVATION_FEE) {
+        throw new ApiError(400, "Insufficient main wallet balance for the Rs 100 activation fee");
+      }
+      await debitWallet(req.user._id, "main", ACTIVATION_FEE, "activation_fee", {});
       await creditCompanyWallet(req.user._id, ACTIVATION_FEE, "activation_fee", {});
       const token = await createTokenForOwner(req.user._id, { generation: 1, pool: 0 });
       await User.findByIdAndUpdate(req.user._id, { hasActivatedToken: true });
@@ -2629,57 +2634,186 @@ var require_admin_routes = __commonJS({
   }
 });
 
+// src/models/shop.model.js
+var require_shop_model = __commonJS({
+  "src/models/shop.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var shopSchema = new mongoose.Schema(
+      {
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        businessType: {
+          type: String,
+          enum: ["shop", "property", "car", "bike"],
+          required: true
+        },
+        shopName: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        phoneNumber: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessAddress: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        businessDescription: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessImage: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessCategories: {
+          type: [String],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"],
+          default: []
+        },
+        // city/location are required on new registrations (enforced by the
+        // registration validator) but left unset on shops backfilled from
+        // legacy user records that never captured a location — those simply
+        // won't surface in city/"near me" searches until the owner sets one.
+        city: {
+          type: String,
+          trim: true,
+          default: null,
+          index: true
+        },
+        location: {
+          type: {
+            type: String,
+            enum: ["Point"]
+          },
+          coordinates: {
+            // [longitude, latitude]
+            type: [Number]
+          }
+        },
+        registrationFee: {
+          type: Number,
+          default: 0
+        },
+        isVerified: {
+          type: Boolean,
+          default: true
+        },
+        isBlocked: {
+          type: Boolean,
+          default: false
+        }
+      },
+      { timestamps: true }
+    );
+    shopSchema.index({ location: "2dsphere" });
+    module2.exports = mongoose.model("Shop", shopSchema);
+  }
+});
+
 // src/controllers/shopkeeper.controller.js
 var require_shopkeeper_controller = __commonJS({
   "src/controllers/shopkeeper.controller.js"(exports2, module2) {
     var asyncHandler = require_asyncHandler();
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
-    var User = require_user_model();
+    var Shop = require_shop_model();
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
     var SHOPKEEPER_REGISTRATION_FEE = 1500;
+    var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
       if (category === "property") return "property";
       if (category === "car") return "car";
       if (category === "motorcycle_scooty") return "bike";
       return "shop";
     };
+    var escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var listShopkeepers = asyncHandler(async (req, res) => {
       const page = Math.max(Number(req.query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
-      const filter = { role: "shopkeeper", isVerified: true, isBlocked: false };
+      const filter = { isVerified: true, isBlocked: false };
       if (req.query.category) filter.businessCategories = req.query.category;
       if (req.query.search) {
-        const search = req.query.search.trim();
+        const search = escapeRegex(req.query.search.trim());
         filter.$or = [
           { shopName: { $regex: search, $options: "i" } },
           { businessAddress: { $regex: search, $options: "i" } },
-          { businessDescription: { $regex: search, $options: "i" } }
+          { businessDescription: { $regex: search, $options: "i" } },
+          { city: { $regex: search, $options: "i" } }
         ];
       }
+      if (req.query.city) {
+        filter.city = { $regex: `^${escapeRegex(req.query.city.trim())}$`, $options: "i" };
+      }
+      const hasCoords = req.query.lat !== void 0 && req.query.lng !== void 0;
       const skip = (page - 1) * limit;
-      const [shopkeepers, total] = await Promise.all([
-        User.find(filter).select("shopName phoneNumber businessAddress businessDescription businessImage businessCategories businessType shopkeeperRegisteredAt").sort({ shopkeeperRegisteredAt: -1, _id: -1 }).skip(skip).limit(limit),
-        User.countDocuments(filter)
+      if (!req.query.city && hasCoords) {
+        const lat = Number(req.query.lat);
+        const lng = Number(req.query.lng);
+        const radiusKm = req.query.radiusKm ? Number(req.query.radiusKm) : DEFAULT_SEARCH_RADIUS_KM;
+        const [result] = await Shop.aggregate([
+          {
+            $geoNear: {
+              near: { type: "Point", coordinates: [lng, lat] },
+              distanceField: "distanceMeters",
+              maxDistance: radiusKm * 1e3,
+              spherical: true,
+              query: filter
+            }
+          },
+          {
+            $facet: {
+              data: [{ $skip: skip }, { $limit: limit }],
+              totalCount: [{ $count: "count" }]
+            }
+          }
+        ]);
+        const shops2 = result?.data || [];
+        const total2 = result?.totalCount?.[0]?.count || 0;
+        return res.status(200).json(
+          new ApiResponse(
+            200,
+            { shops: shops2, pagination: { page, limit, total: total2, pages: Math.ceil(total2 / limit) } },
+            "Shops fetched successfully"
+          )
+        );
+      }
+      const [shops, total] = await Promise.all([
+        Shop.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit),
+        Shop.countDocuments(filter)
       ]);
       res.status(200).json(
         new ApiResponse(
           200,
-          { shopkeepers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
-          "Shopkeepers fetched successfully"
+          { shops, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Shops fetched successfully"
         )
       );
     });
+    var myShops = asyncHandler(async (req, res) => {
+      const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 });
+      res.status(200).json(new ApiResponse(200, { shops }, "Your shops fetched successfully"));
+    });
     var registerShopkeeper = asyncHandler(async (req, res) => {
       const user = req.user;
-      if (user.role !== "shopper") {
-        throw new ApiError(400, "Only shopper accounts can register as a shopkeeper");
+      if (user.role !== "shopper" && user.role !== "shopkeeper") {
+        throw new ApiError(400, "Only shopper or shopkeeper accounts can register a shop");
       }
-      const { shopName, phoneNumber, address, description, image, categories } = req.body;
+      const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
       const businessType = getBusinessType(categories[0]);
       const wallet = await getOrCreateWallet(user._id);
       if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-        throw new ApiError(400, "Insufficient main wallet balance for the Rs 1500 shopkeeper registration fee");
+        throw new ApiError(400, "Insufficient main wallet balance for the Rs 1500 shop registration fee");
       }
       await debitWallet(user._id, "main", SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
         shopName,
@@ -2689,33 +2823,80 @@ var require_shopkeeper_controller = __commonJS({
         shopName,
         categories
       });
-      user.role = "shopkeeper";
-      user.businessType = businessType;
-      user.shopName = shopName;
-      user.phoneNumber = phoneNumber;
-      user.businessAddress = address;
-      user.businessDescription = description || null;
-      user.businessImage = image || null;
-      user.businessCategories = [...new Set(categories)];
-      user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
-      user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
-      await user.save();
+      const shop = await Shop.create({
+        owner: user._id,
+        businessType,
+        shopName,
+        phoneNumber,
+        businessAddress: address,
+        businessDescription: description || null,
+        businessImage: image || null,
+        businessCategories: [...new Set(categories)],
+        city,
+        location: { type: "Point", coordinates: [lng, lat] },
+        registrationFee: SHOPKEEPER_REGISTRATION_FEE
+      });
+      if (user.role === "shopper") {
+        user.role = "shopkeeper";
+        user.businessType = businessType;
+        user.shopName = shopName;
+        user.phoneNumber = phoneNumber;
+        user.businessAddress = address;
+        user.businessDescription = description || null;
+        user.businessImage = image || null;
+        user.businessCategories = [...new Set(categories)];
+        user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+        user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
+        await user.save();
+      }
       res.status(201).json(
-        new ApiResponse(
-          201,
-          { user, registrationFee: SHOPKEEPER_REGISTRATION_FEE },
-          "Shopkeeper registered successfully"
-        )
+        new ApiResponse(201, { shop, registrationFee: SHOPKEEPER_REGISTRATION_FEE }, "Shop registered successfully")
       );
     });
-    module2.exports = { registerShopkeeper, listShopkeepers };
+    var updateShop = asyncHandler(async (req, res) => {
+      const shop = await Shop.findById(req.params.shopId);
+      if (!shop) {
+        throw new ApiError(404, "Shop not found");
+      }
+      if (!shop.owner.equals(req.user._id)) {
+        throw new ApiError(403, "You do not own this shop");
+      }
+      const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
+      if (shopName !== void 0) shop.shopName = shopName;
+      if (phoneNumber !== void 0) shop.phoneNumber = phoneNumber;
+      if (address !== void 0) shop.businessAddress = address;
+      if (description !== void 0) shop.businessDescription = description || null;
+      if (image !== void 0) shop.businessImage = image || null;
+      if (categories !== void 0) {
+        shop.businessCategories = [...new Set(categories)];
+        shop.businessType = getBusinessType(categories[0]);
+      }
+      if (city !== void 0) shop.city = city;
+      if (lat !== void 0 && lng !== void 0) {
+        shop.location = { type: "Point", coordinates: [lng, lat] };
+      }
+      await shop.save();
+      res.status(200).json(new ApiResponse(200, { shop }, "Shop updated successfully"));
+    });
+    var deleteShop = asyncHandler(async (req, res) => {
+      const shop = await Shop.findById(req.params.shopId);
+      if (!shop) {
+        throw new ApiError(404, "Shop not found");
+      }
+      if (!shop.owner.equals(req.user._id)) {
+        throw new ApiError(403, "You do not own this shop");
+      }
+      await shop.deleteOne();
+      res.status(200).json(new ApiResponse(200, null, "Shop deleted successfully"));
+    });
+    module2.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop, deleteShop };
   }
 });
 
 // src/validators/shopkeeper.validator.js
 var require_shopkeeper_validator = __commonJS({
   "src/validators/shopkeeper.validator.js"(exports2, module2) {
-    var { body, query } = require("express-validator");
+    var { body, query, param } = require("express-validator");
     var SHOPKEEPER_CATEGORIES = [
       "shopping",
       "wholesale",
@@ -2733,15 +2914,42 @@ var require_shopkeeper_validator = __commonJS({
       body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
       body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
       body("categories").isArray({ min: 1 }).withMessage("categories must contain at least one category"),
-      body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`)
+      body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
+      body("city").trim().notEmpty().withMessage("city is required").isLength({ max: 100 }).withMessage("city must be at most 100 characters"),
+      body("lat").notEmpty().withMessage("lat is required").isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
+      body("lng").notEmpty().withMessage("lng is required").isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
     ];
     var shopkeeperDirectoryValidator = [
       query("category").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage("category is not supported"),
       query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
+      query("city").optional().trim().isLength({ min: 1, max: 100 }).withMessage("city must be 1 to 100 characters"),
+      query("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90"),
+      query("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180"),
+      query("radiusKm").optional().isFloat({ min: 0.1, max: 1e3 }).withMessage("radiusKm must be between 0.1 and 1000"),
       query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
       query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
     ];
-    module2.exports = { shopkeeperRegistrationValidator, shopkeeperDirectoryValidator, SHOPKEEPER_CATEGORIES };
+    var shopUpdateValidator = [
+      param("shopId").isMongoId().withMessage("shopId must be a valid id"),
+      body("shopName").optional().trim().notEmpty().isLength({ max: 120 }).withMessage("shopName must be 1 to 120 characters"),
+      body("phoneNumber").optional().trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
+      body("address").optional().trim().notEmpty().isLength({ max: 300 }).withMessage("address must be 1 to 300 characters"),
+      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
+      body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
+      body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
+      body("categories.*").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
+      body("city").optional().trim().notEmpty().isLength({ max: 100 }).withMessage("city must be 1 to 100 characters"),
+      body("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
+      body("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
+    ];
+    var shopIdParamValidator = [param("shopId").isMongoId().withMessage("shopId must be a valid id")];
+    module2.exports = {
+      shopkeeperRegistrationValidator,
+      shopkeeperDirectoryValidator,
+      shopUpdateValidator,
+      shopIdParamValidator,
+      SHOPKEEPER_CATEGORIES
+    };
   }
 });
 
@@ -2749,16 +2957,27 @@ var require_shopkeeper_validator = __commonJS({
 var require_shopkeeper_routes = __commonJS({
   "src/routes/shopkeeper.routes.js"(exports2, module2) {
     var express = require("express");
-    var { registerShopkeeper, listShopkeepers } = require_shopkeeper_controller();
+    var {
+      registerShopkeeper,
+      listShopkeepers,
+      myShops,
+      updateShop,
+      deleteShop
+    } = require_shopkeeper_controller();
     var {
       shopkeeperRegistrationValidator,
-      shopkeeperDirectoryValidator
+      shopkeeperDirectoryValidator,
+      shopUpdateValidator,
+      shopIdParamValidator
     } = require_shopkeeper_validator();
     var validate = require_validate_middleware();
     var { authenticate } = require_auth_middleware();
     var router = express.Router();
     router.get("/", shopkeeperDirectoryValidator, validate, listShopkeepers);
+    router.get("/mine", authenticate, myShops);
     router.post("/register", authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
+    router.patch("/:shopId", authenticate, shopUpdateValidator, validate, updateShop);
+    router.post("/:shopId/delete", authenticate, shopIdParamValidator, validate, deleteShop);
     module2.exports = router;
   }
 });
@@ -2867,15 +3086,27 @@ var require_app = __commonJS({
 var require_db = __commonJS({
   "src/config/db.js"(exports2, module2) {
     var mongoose = require("mongoose");
+    var dns = require("dns");
     var env2 = require_env();
     mongoose.set("bufferTimeoutMS", 3e4);
     var connectionPromise = null;
+    var isDnsError = (error) => ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ESERVFAIL"].includes(error?.code) && /query(Srv|Txt)/.test(error?.syscall || "");
+    var connectWithDnsFallback = async () => {
+      try {
+        return await mongoose.connect(env2.MONGO_URI, { serverSelectionTimeoutMS: 3e4 });
+      } catch (error) {
+        if (!isDnsError(error)) throw error;
+        console.warn("MongoDB SRV lookup failed via system DNS, retrying with public DNS servers...");
+        dns.setServers(["8.8.8.8", "1.1.1.1"]);
+        return mongoose.connect(env2.MONGO_URI, { serverSelectionTimeoutMS: 3e4 });
+      }
+    };
     var connectDB2 = () => {
       if (mongoose.connection.readyState === 1) {
         return Promise.resolve(mongoose.connection);
       }
       if (!connectionPromise) {
-        connectionPromise = mongoose.connect(env2.MONGO_URI, { serverSelectionTimeoutMS: 3e4 }).then((conn) => {
+        connectionPromise = connectWithDnsFallback().then((conn) => {
           console.log(`MongoDB connected: ${mongoose.connection.host}`);
           return conn;
         }).catch((error) => {
