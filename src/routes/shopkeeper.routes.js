@@ -21,6 +21,6 @@ router.get('/', shopkeeperDirectoryValidator, validate, listShopkeepers);
 router.get('/mine', authenticate, myShops);
 router.post('/register', authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
 router.patch('/:shopId', authenticate, shopUpdateValidator, validate, updateShop);
-router.delete('/:shopId', authenticate, shopIdParamValidator, validate, deleteShop);
+router.post('/:shopId/delete', authenticate, shopIdParamValidator, validate, deleteShop);
 
 module.exports = router;

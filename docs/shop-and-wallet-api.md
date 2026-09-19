@@ -290,8 +290,10 @@ Same field names/limits as registration (section 2), minus `categories` also bei
 
 Owner-only. Permanently removes the shop from the directory. **The Rs 1500 registration fee is not refunded.**
 
+This is a `POST`, not a `DELETE` — same behavior, just a different HTTP method so any client/proxy that has trouble sending `DELETE` still works.
+
 ```
-DELETE /api/shopkeepers/:shopId
+POST /api/shopkeepers/:shopId/delete
 Authorization: Bearer <accessToken>
 ```
 
