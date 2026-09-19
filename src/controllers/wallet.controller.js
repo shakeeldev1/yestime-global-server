@@ -5,7 +5,7 @@ const User = require('../models/user.model');
 const CompanyWallet = require('../models/companyWallet.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const mongoose = require('mongoose');
-const { getOrCreateWallet, creditCompanyWallet } = require('../services/wallet.service');
+const { getOrCreateWallet, debitWallet, creditCompanyWallet } = require('../services/wallet.service');
 const { createTokenForOwner } = require('../services/token.service');
 
 const ACTIVATION_FEE = 100;
@@ -91,7 +91,12 @@ const activate = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Your account already has an active token');
   }
 
-  // NOTE: same payment-gateway stub as topup above — treated as instantly paid.
+  const wallet = await getOrCreateWallet(req.user._id);
+  if (wallet.mainBalance < ACTIVATION_FEE) {
+    throw new ApiError(400, 'Insufficient main wallet balance for the Rs 100 activation fee');
+  }
+
+  await debitWallet(req.user._id, 'main', ACTIVATION_FEE, 'activation_fee', {});
   await creditCompanyWallet(req.user._id, ACTIVATION_FEE, 'activation_fee', {});
 
   const token = await createTokenForOwner(req.user._id, { generation: 1, pool: 0 });
