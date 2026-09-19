@@ -1,9 +1,16 @@
 const express = require('express');
-const { registerShopkeeper, listShopkeepers, myShops, updateShop } = require('../controllers/shopkeeper.controller');
+const {
+	registerShopkeeper,
+	listShopkeepers,
+	myShops,
+	updateShop,
+	deleteShop,
+} = require('../controllers/shopkeeper.controller');
 const {
 	shopkeeperRegistrationValidator,
 	shopkeeperDirectoryValidator,
 	shopUpdateValidator,
+	shopIdParamValidator,
 } = require('../validators/shopkeeper.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate } = require('../middlewares/auth.middleware');
@@ -14,5 +21,6 @@ router.get('/', shopkeeperDirectoryValidator, validate, listShopkeepers);
 router.get('/mine', authenticate, myShops);
 router.post('/register', authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
 router.patch('/:shopId', authenticate, shopUpdateValidator, validate, updateShop);
+router.delete('/:shopId', authenticate, shopIdParamValidator, validate, deleteShop);
 
 module.exports = router;

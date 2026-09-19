@@ -200,4 +200,20 @@ const updateShop = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { shop }, 'Shop updated successfully'));
 });
 
-module.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop };
+// DELETE /api/shopkeepers/:shopId (authenticated, owner only)
+// The Rs 1500 registration fee is not refunded.
+const deleteShop = asyncHandler(async (req, res) => {
+  const shop = await Shop.findById(req.params.shopId);
+  if (!shop) {
+    throw new ApiError(404, 'Shop not found');
+  }
+  if (!shop.owner.equals(req.user._id)) {
+    throw new ApiError(403, 'You do not own this shop');
+  }
+
+  await shop.deleteOne();
+
+  res.status(200).json(new ApiResponse(200, null, 'Shop deleted successfully'));
+});
+
+module.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop, deleteShop };

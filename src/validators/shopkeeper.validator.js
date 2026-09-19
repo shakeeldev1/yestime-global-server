@@ -109,9 +109,12 @@ const shopUpdateValidator = [
   body('lng').optional().isFloat({ min: -180, max: 180 }).withMessage('lng must be between -180 and 180').toFloat(),
 ];
 
+const shopIdParamValidator = [param('shopId').isMongoId().withMessage('shopId must be a valid id')];
+
 module.exports = {
   shopkeeperRegistrationValidator,
   shopkeeperDirectoryValidator,
   shopUpdateValidator,
+  shopIdParamValidator,
   SHOPKEEPER_CATEGORIES,
 };
