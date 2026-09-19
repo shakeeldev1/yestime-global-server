@@ -10,7 +10,7 @@ const {
 	shopkeeperRegistrationValidator,
 	shopkeeperDirectoryValidator,
 	shopUpdateValidator,
-	shopIdParamValidator,
+	shopDeleteValidator,
 } = require('../validators/shopkeeper.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate } = require('../middlewares/auth.middleware');
@@ -21,6 +21,6 @@ router.get('/', shopkeeperDirectoryValidator, validate, listShopkeepers);
 router.get('/mine', authenticate, myShops);
 router.post('/register', authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
 router.patch('/:shopId', authenticate, shopUpdateValidator, validate, updateShop);
-router.post('/:shopId/delete', authenticate, shopIdParamValidator, validate, deleteShop);
+router.post('/delete', authenticate, shopDeleteValidator, validate, deleteShop);
 
 module.exports = router;

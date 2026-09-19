@@ -2879,7 +2879,7 @@ var require_shopkeeper_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, { shop }, "Shop updated successfully"));
     });
     var deleteShop = asyncHandler(async (req, res) => {
-      const shop = await Shop.findById(req.params.shopId);
+      const shop = await Shop.findById(req.body.shopId);
       if (!shop) {
         throw new ApiError(404, "Shop not found");
       }
@@ -2942,12 +2942,12 @@ var require_shopkeeper_validator = __commonJS({
       body("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
       body("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
     ];
-    var shopIdParamValidator = [param("shopId").isMongoId().withMessage("shopId must be a valid id")];
+    var shopDeleteValidator = [body("shopId").isMongoId().withMessage("shopId must be a valid id")];
     module2.exports = {
       shopkeeperRegistrationValidator,
       shopkeeperDirectoryValidator,
       shopUpdateValidator,
-      shopIdParamValidator,
+      shopDeleteValidator,
       SHOPKEEPER_CATEGORIES
     };
   }
@@ -2968,7 +2968,7 @@ var require_shopkeeper_routes = __commonJS({
       shopkeeperRegistrationValidator,
       shopkeeperDirectoryValidator,
       shopUpdateValidator,
-      shopIdParamValidator
+      shopDeleteValidator
     } = require_shopkeeper_validator();
     var validate = require_validate_middleware();
     var { authenticate } = require_auth_middleware();
@@ -2977,7 +2977,7 @@ var require_shopkeeper_routes = __commonJS({
     router.get("/mine", authenticate, myShops);
     router.post("/register", authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
     router.patch("/:shopId", authenticate, shopUpdateValidator, validate, updateShop);
-    router.post("/:shopId/delete", authenticate, shopIdParamValidator, validate, deleteShop);
+    router.post("/delete", authenticate, shopDeleteValidator, validate, deleteShop);
     module2.exports = router;
   }
 });
