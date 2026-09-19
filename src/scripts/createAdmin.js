@@ -5,7 +5,7 @@
 //   node src/scripts/createAdmin.js "Name" "email@example.com" "password"
 
 const mongoose = require('mongoose');
-const env = require('../config/env');
+const connectDB = require('../config/db');
 const User = require('../models/user.model');
 
 const [, , name, email, password] = process.argv;
@@ -16,7 +16,7 @@ if (!name || !email || !password) {
 }
 
 const run = async () => {
-  await mongoose.connect(env.MONGO_URI);
+  await connectDB();
 
   const existing = await User.findOne({ email: email.toLowerCase() });
   if (existing) {
