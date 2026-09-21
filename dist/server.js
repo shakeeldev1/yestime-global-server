@@ -2729,6 +2729,7 @@ var require_shopkeeper_controller = __commonJS({
     var ApiResponse = require_ApiResponse();
     var Shop = require_shop_model();
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
+    var { uploadImageBuffer } = require_cloudinary();
     var SHOPKEEPER_REGISTRATION_FEE = 1500;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
@@ -2809,8 +2810,15 @@ var require_shopkeeper_controller = __commonJS({
       if (user.role !== "shopper" && user.role !== "shopkeeper") {
         throw new ApiError(400, "Only shopper or shopkeeper accounts can register a shop");
       }
-      const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
+      const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
       const businessType = getBusinessType(categories[0]);
+      let imageUrl = null;
+      if (req.file) {
+        const uploadedImage = await uploadImageBuffer(req.file.buffer, {
+          folder: "yestime-global/shop-images"
+        });
+        imageUrl = uploadedImage.secure_url;
+      }
       const wallet = await getOrCreateWallet(user._id);
       if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
         throw new ApiError(400, "Insufficient main wallet balance for the Rs 1500 shop registration fee");
@@ -2830,7 +2838,7 @@ var require_shopkeeper_controller = __commonJS({
         phoneNumber,
         businessAddress: address,
         businessDescription: description || null,
-        businessImage: image || null,
+        businessImage: imageUrl,
         businessCategories: [...new Set(categories)],
         city,
         location: { type: "Point", coordinates: [lng, lat] },
@@ -2843,7 +2851,7 @@ var require_shopkeeper_controller = __commonJS({
         user.phoneNumber = phoneNumber;
         user.businessAddress = address;
         user.businessDescription = description || null;
-        user.businessImage = image || null;
+        user.businessImage = imageUrl;
         user.businessCategories = [...new Set(categories)];
         user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
         user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
@@ -2861,12 +2869,17 @@ var require_shopkeeper_controller = __commonJS({
       if (!shop.owner.equals(req.user._id)) {
         throw new ApiError(403, "You do not own this shop");
       }
-      const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
+      const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
       if (shopName !== void 0) shop.shopName = shopName;
       if (phoneNumber !== void 0) shop.phoneNumber = phoneNumber;
       if (address !== void 0) shop.businessAddress = address;
       if (description !== void 0) shop.businessDescription = description || null;
-      if (image !== void 0) shop.businessImage = image || null;
+      if (req.file) {
+        const uploadedImage = await uploadImageBuffer(req.file.buffer, {
+          folder: "yestime-global/shop-images"
+        });
+        shop.businessImage = uploadedImage.secure_url;
+      }
       if (categories !== void 0) {
         shop.businessCategories = [...new Set(categories)];
         shop.businessType = getBusinessType(categories[0]);
@@ -2912,7 +2925,6 @@ var require_shopkeeper_validator = __commonJS({
       body("phoneNumber").trim().notEmpty().withMessage("phoneNumber is required").isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
       body("address").trim().notEmpty().withMessage("address is required").isLength({ max: 300 }).withMessage("address must be at most 300 characters"),
       body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
-      body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
       body("categories").isArray({ min: 1 }).withMessage("categories must contain at least one category"),
       body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
       body("city").trim().notEmpty().withMessage("city is required").isLength({ max: 100 }).withMessage("city must be at most 100 characters"),
@@ -2935,7 +2947,6 @@ var require_shopkeeper_validator = __commonJS({
       body("phoneNumber").optional().trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
       body("address").optional().trim().notEmpty().isLength({ max: 300 }).withMessage("address must be 1 to 300 characters"),
       body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
-      body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
       body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
       body("categories.*").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
       body("city").optional().trim().notEmpty().isLength({ max: 100 }).withMessage("city must be 1 to 100 characters"),
@@ -2950,6 +2961,24 @@ var require_shopkeeper_validator = __commonJS({
       shopDeleteValidator,
       SHOPKEEPER_CATEGORIES
     };
+  }
+});
+
+// src/middlewares/shopImageUpload.js
+var require_shopImageUpload = __commonJS({
+  "src/middlewares/shopImageUpload.js"(exports2, module2) {
+    var multer = require("multer");
+    var uploadShopImage = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, callback) => {
+        if (!["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) {
+          return callback(new Error("Shop image must be a JPG, PNG or WEBP image"));
+        }
+        callback(null, true);
+      }
+    });
+    module2.exports = { uploadShopImage };
   }
 });
 
@@ -2972,11 +3001,12 @@ var require_shopkeeper_routes = __commonJS({
     } = require_shopkeeper_validator();
     var validate = require_validate_middleware();
     var { authenticate } = require_auth_middleware();
+    var { uploadShopImage } = require_shopImageUpload();
     var router = express.Router();
     router.get("/", shopkeeperDirectoryValidator, validate, listShopkeepers);
     router.get("/mine", authenticate, myShops);
-    router.post("/register", authenticate, shopkeeperRegistrationValidator, validate, registerShopkeeper);
-    router.patch("/:shopId", authenticate, shopUpdateValidator, validate, updateShop);
+    router.post("/register", authenticate, uploadShopImage.single("image"), shopkeeperRegistrationValidator, validate, registerShopkeeper);
+    router.patch("/:shopId", authenticate, uploadShopImage.single("image"), shopUpdateValidator, validate, updateShop);
     router.post("/delete", authenticate, shopDeleteValidator, validate, deleteShop);
     module2.exports = router;
   }

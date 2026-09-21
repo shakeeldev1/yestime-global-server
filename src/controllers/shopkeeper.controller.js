@@ -3,6 +3,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const Shop = require('../models/shop.model');
 const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../services/wallet.service');
+const { uploadImageBuffer } = require('../lib/cloudinary');
 
 const SHOPKEEPER_REGISTRATION_FEE = 1500;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
@@ -113,8 +114,16 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Only shopper or shopkeeper accounts can register a shop');
   }
 
-  const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
+  const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
   const businessType = getBusinessType(categories[0]);
+  let imageUrl = null;
+
+  if (req.file) {
+    const uploadedImage = await uploadImageBuffer(req.file.buffer, {
+      folder: 'yestime-global/shop-images',
+    });
+    imageUrl = uploadedImage.secure_url;
+  }
 
   const wallet = await getOrCreateWallet(user._id);
   if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
@@ -137,7 +146,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     phoneNumber,
     businessAddress: address,
     businessDescription: description || null,
-    businessImage: image || null,
+    businessImage: imageUrl,
     businessCategories: [...new Set(categories)],
     city,
     location: { type: 'Point', coordinates: [lng, lat] },
@@ -155,7 +164,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     user.phoneNumber = phoneNumber;
     user.businessAddress = address;
     user.businessDescription = description || null;
-    user.businessImage = image || null;
+    user.businessImage = imageUrl;
     user.businessCategories = [...new Set(categories)];
     user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
     user.shopkeeperRegisteredAt = new Date();
@@ -179,13 +188,18 @@ const updateShop = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'You do not own this shop');
   }
 
-  const { shopName, phoneNumber, address, description, image, categories, city, lat, lng } = req.body;
+  const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
 
   if (shopName !== undefined) shop.shopName = shopName;
   if (phoneNumber !== undefined) shop.phoneNumber = phoneNumber;
   if (address !== undefined) shop.businessAddress = address;
   if (description !== undefined) shop.businessDescription = description || null;
-  if (image !== undefined) shop.businessImage = image || null;
+  if (req.file) {
+    const uploadedImage = await uploadImageBuffer(req.file.buffer, {
+      folder: 'yestime-global/shop-images',
+    });
+    shop.businessImage = uploadedImage.secure_url;
+  }
   if (categories !== undefined) {
     shop.businessCategories = [...new Set(categories)];
     shop.businessType = getBusinessType(categories[0]);

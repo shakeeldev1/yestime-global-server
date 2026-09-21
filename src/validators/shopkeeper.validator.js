@@ -35,11 +35,6 @@ const shopkeeperRegistrationValidator = [
     .trim()
     .isLength({ max: 1000 })
     .withMessage('description must be at most 1000 characters'),
-  body('image')
-    .optional({ values: 'null' })
-    .trim()
-    .isLength({ max: 500 })
-    .withMessage('image must be at most 500 characters'),
   body('categories')
     .isArray({ min: 1 })
     .withMessage('categories must contain at least one category'),
@@ -94,11 +89,6 @@ const shopUpdateValidator = [
     .trim()
     .isLength({ max: 1000 })
     .withMessage('description must be at most 1000 characters'),
-  body('image')
-    .optional({ values: 'null' })
-    .trim()
-    .isLength({ max: 500 })
-    .withMessage('image must be at most 500 characters'),
   body('categories').optional().isArray({ min: 1 }).withMessage('categories must contain at least one category'),
   body('categories.*')
     .optional()

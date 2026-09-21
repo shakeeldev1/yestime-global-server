@@ -2,7 +2,8 @@
 
 Base URL: `http://localhost:5000/api`
 
-All request/response bodies are JSON. Send `Content-Type: application/json` on every request with a body.
+Most request/response bodies are JSON. Shop image registration and updates use
+`multipart/form-data` with an image file in the `image` field.
 
 ## Auth model — read this first
 
@@ -231,17 +232,21 @@ Rs 1,500 in its main wallet. The fee is debited from the user's main wallet and
 credited to the company wallet in the same way as other wallet movements. This
 endpoint can only be used once per account.
 
-Request body:
-```json
-{
-  "shopName": "City Mart",
-  "phoneNumber": "+923001234567",
-  "address": "Main Market, Lahore",
-  "description": "General shopping and household goods",
-  "image": "https://example.com/city-mart.jpg",
-  "categories": ["shopping", "wholesale"]
-}
+Request body: `multipart/form-data`
+
+Text fields:
+```text
+shopName=City Mart
+phoneNumber=+923001234567
+address=Main Market, Lahore
+description=General shopping and household goods
+categories=shopping
+categories=wholesale
 ```
+
+File field: `image` — optional JPG, PNG, or WEBP image, maximum 5 MB. The
+image is uploaded to Cloudinary and the returned `businessImage` value is the
+Cloudinary secure URL. Do not send an image URL in the request.
 
 Allowed categories are `shopping`, `wholesale`, `petrol_diesel`,
 `motorcycle_scooty`, `car`, `property`, `crop`, and `self_service_saving`.
@@ -252,6 +257,16 @@ existing purchase flow: `property` maps to property dealer, `car` to car dealer,
 Response `201` contains the upgraded `user` and `registrationFee: 1500`.
 Errors: `400` if the caller is not a shopper or has insufficient main-wallet
 balance, and `422` for invalid or missing business details.
+
+### `PATCH /shopkeepers/:shopId` 🔒
+
+Updates a shop owned by the authenticated user. Send the editable text fields
+as `multipart/form-data`; all fields are optional. To replace the image, attach
+a JPG, PNG, or WEBP file under the `image` field (maximum 5 MB). If `image` is
+omitted, the existing Cloudinary image remains unchanged.
+
+The response contains the updated shop with its Cloudinary URL in
+`businessImage`.
 
 ### `GET /shopkeepers`
 
@@ -571,6 +586,7 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | GET | `/auth/me` | Yes | Get current user's profile |
 | PATCH | `/auth/me` | Yes | Edit current user's profile |
 | POST | `/auth/change-password` | Yes | Change password and revoke sessions |
+| PATCH | `/shopkeepers/:shopId` | Yes (owner) | Update shop details and optionally upload a new image |
 | POST | `/tokens/activate` | Yes (shopper) | Pay Rs 100, get first token |
 | GET | `/tokens/me` | Yes | List my tokens |
 | POST | `/purchases` | Yes (shopkeeper) | Record a shop sale, or a dealer-submitted property/car/bike deal |
