@@ -2553,87 +2553,6 @@ var require_admin_controller = __commonJS({
   }
 });
 
-// src/validators/admin.validator.js
-var require_admin_validator = __commonJS({
-  "src/validators/admin.validator.js"(exports2, module2) {
-    var { body, query } = require("express-validator");
-    var listUsersValidator = [
-      query("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
-      query("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
-      query("isVerified").optional().isIn(["true", "false"]).withMessage("isVerified must be true or false"),
-      query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false"),
-      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
-      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
-    ];
-    var createUserValidator = [
-      body("name").trim().notEmpty().withMessage("Name is required"),
-      body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
-      body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
-      body("role").isIn(["shopper", "shopkeeper", "admin"]).withMessage("Role must be shopper, shopkeeper or admin"),
-      body("businessType").if(body("role").equals("shopkeeper")).notEmpty().withMessage("businessType is required for shopkeeper accounts").bail().isIn(["shop", "property", "car", "bike"]).withMessage("businessType must be one of shop, property, car, bike")
-    ];
-    var updateUserValidator = [
-      body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
-      body("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
-      body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
-      body("taxRate").optional().isFloat({ min: 0, max: 100 }).withMessage("taxRate must be between 0 and 100")
-    ];
-    var creditWalletValidator = [
-      body("wallet").isIn(["main", "lottery"]).withMessage("wallet must be main or lottery"),
-      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0"),
-      body("note").optional().trim().isLength({ max: 200 }).withMessage("note must be 200 characters or fewer")
-    ];
-    module2.exports = { listUsersValidator, createUserValidator, updateUserValidator, creditWalletValidator };
-  }
-});
-
-// src/routes/admin.routes.js
-var require_admin_routes = __commonJS({
-  "src/routes/admin.routes.js"(exports2, module2) {
-    var express = require("express");
-    var {
-      listUsers,
-      getUser,
-      createUser,
-      updateUser,
-      blockUser,
-      unblockUser,
-      deleteUser,
-      creditUserWallet,
-      getStats
-    } = require_admin_controller();
-    var {
-      listPayments,
-      approvePayment,
-      rejectPayment
-    } = require_payment_controller();
-    var {
-      listUsersValidator,
-      createUserValidator,
-      updateUserValidator,
-      creditWalletValidator
-    } = require_admin_validator();
-    var { rejectPaymentValidator } = require_wallet_validator();
-    var validate = require_validate_middleware();
-    var { authenticate, authorize } = require_auth_middleware();
-    var router = express.Router();
-    router.use(authenticate, authorize("admin"));
-    router.get("/stats", getStats);
-    router.get("/users", listUsersValidator, validate, listUsers);
-    router.post("/users", createUserValidator, validate, createUser);
-    router.get("/users/:id", getUser);
-    router.patch("/users/:id", updateUserValidator, validate, updateUser);
-    router.post("/users/:id/block", blockUser);
-    router.post("/users/:id/unblock", unblockUser);
-    router.delete("/users/:id", deleteUser);
-    router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
-    router.get("/payments", listPayments);
-    router.post("/payments/:id/approve", approvePayment);
-    router.post("/payments/:id/reject", rejectPaymentValidator, validate, rejectPayment);
-    module2.exports = router;
-  }
-});
-
 // src/models/shop.model.js
 var require_shop_model = __commonJS({
   "src/models/shop.model.js"(exports2, module2) {
@@ -2705,6 +2624,26 @@ var require_shop_model = __commonJS({
           type: Number,
           default: 0
         },
+        approvalStatus: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          index: true
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          trim: true,
+          default: null
+        },
         isVerified: {
           type: Boolean,
           default: true
@@ -2721,6 +2660,176 @@ var require_shop_model = __commonJS({
   }
 });
 
+// src/controllers/shopAdmin.controller.js
+var require_shopAdmin_controller = __commonJS({
+  "src/controllers/shopAdmin.controller.js"(exports2, module2) {
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var Shop = require_shop_model();
+    var { notifyUser } = require_mailer();
+    var paginate = (query) => {
+      const page = Math.max(Number(query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+      return { page, limit, skip: (page - 1) * limit };
+    };
+    var listShops = asyncHandler(async (req, res) => {
+      const { status, search } = req.query;
+      const { page, limit, skip } = paginate(req.query);
+      const filter = {};
+      if (status) filter.approvalStatus = status;
+      if (search) {
+        filter.$or = [
+          { shopName: { $regex: search, $options: "i" } },
+          { businessAddress: { $regex: search, $options: "i" } },
+          { city: { $regex: search, $options: "i" } }
+        ];
+      }
+      const [shops, total] = await Promise.all([
+        Shop.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).populate({ path: "owner", select: "name email role" }).populate({ path: "reviewedBy", select: "name email" }),
+        Shop.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { shops, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Shops fetched successfully"
+        )
+      );
+    });
+    var findPendingShop = async (id) => {
+      const shop = await Shop.findById(id).populate({ path: "owner", select: "name email role" });
+      if (!shop) throw new ApiError(404, "Shop not found");
+      if (shop.approvalStatus !== "pending") {
+        throw new ApiError(400, `This shop is already ${shop.approvalStatus}`);
+      }
+      return shop;
+    };
+    var approveShop = asyncHandler(async (req, res) => {
+      const shop = await findPendingShop(req.params.id);
+      shop.approvalStatus = "approved";
+      shop.isVerified = true;
+      shop.reviewedBy = req.user._id;
+      shop.reviewedAt = /* @__PURE__ */ new Date();
+      shop.rejectionReason = null;
+      await shop.save();
+      notifyUser({
+        to: shop.owner.email,
+        subject: `Shop approved: ${shop.shopName}`,
+        html: `<p>Hi ${shop.owner.name},</p><p>Your shop <strong>${shop.shopName}</strong> has been approved and is now visible in the public shop directory.</p>`
+      }).catch((error) => console.error("Failed to send shop approval email:", error.message));
+      res.status(200).json(new ApiResponse(200, { shop }, "Shop approved successfully"));
+    });
+    var rejectShop = asyncHandler(async (req, res) => {
+      const shop = await findPendingShop(req.params.id);
+      shop.approvalStatus = "rejected";
+      shop.isVerified = false;
+      shop.reviewedBy = req.user._id;
+      shop.reviewedAt = /* @__PURE__ */ new Date();
+      shop.rejectionReason = req.body.reason || null;
+      await shop.save();
+      notifyUser({
+        to: shop.owner.email,
+        subject: `Shop review update: ${shop.shopName}`,
+        html: `<p>Hi ${shop.owner.name},</p><p>Your shop <strong>${shop.shopName}</strong> was not approved for public listing.</p><p><strong>Reason:</strong> ${shop.rejectionReason || "The submitted details could not be verified."}</p><p>You may update the shop details and contact support if you need assistance.</p>`
+      }).catch((error) => console.error("Failed to send shop rejection email:", error.message));
+      res.status(200).json(new ApiResponse(200, { shop }, "Shop rejected successfully"));
+    });
+    module2.exports = { listShops, approveShop, rejectShop };
+  }
+});
+
+// src/validators/admin.validator.js
+var require_admin_validator = __commonJS({
+  "src/validators/admin.validator.js"(exports2, module2) {
+    var { body, query } = require("express-validator");
+    var listUsersValidator = [
+      query("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
+      query("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
+      query("isVerified").optional().isIn(["true", "false"]).withMessage("isVerified must be true or false"),
+      query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false"),
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    var createUserValidator = [
+      body("name").trim().notEmpty().withMessage("Name is required"),
+      body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
+      body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
+      body("role").isIn(["shopper", "shopkeeper", "admin"]).withMessage("Role must be shopper, shopkeeper or admin"),
+      body("businessType").if(body("role").equals("shopkeeper")).notEmpty().withMessage("businessType is required for shopkeeper accounts").bail().isIn(["shop", "property", "car", "bike"]).withMessage("businessType must be one of shop, property, car, bike")
+    ];
+    var updateUserValidator = [
+      body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
+      body("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
+      body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
+      body("taxRate").optional().isFloat({ min: 0, max: 100 }).withMessage("taxRate must be between 0 and 100")
+    ];
+    var creditWalletValidator = [
+      body("wallet").isIn(["main", "lottery"]).withMessage("wallet must be main or lottery"),
+      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0"),
+      body("note").optional().trim().isLength({ max: 200 }).withMessage("note must be 200 characters or fewer")
+    ];
+    module2.exports = { listUsersValidator, createUserValidator, updateUserValidator, creditWalletValidator };
+  }
+});
+
+// src/routes/admin.routes.js
+var require_admin_routes = __commonJS({
+  "src/routes/admin.routes.js"(exports2, module2) {
+    var express = require("express");
+    var {
+      listUsers,
+      getUser,
+      createUser,
+      updateUser,
+      blockUser,
+      unblockUser,
+      deleteUser,
+      creditUserWallet,
+      getStats
+    } = require_admin_controller();
+    var {
+      listPayments,
+      approvePayment,
+      rejectPayment
+    } = require_payment_controller();
+    var { listShops, approveShop, rejectShop } = require_shopAdmin_controller();
+    var {
+      listUsersValidator,
+      createUserValidator,
+      updateUserValidator,
+      creditWalletValidator
+    } = require_admin_validator();
+    var { rejectPaymentValidator } = require_wallet_validator();
+    var { body } = require("express-validator");
+    var validate = require_validate_middleware();
+    var { authenticate, authorize } = require_auth_middleware();
+    var router = express.Router();
+    router.use(authenticate, authorize("admin"));
+    router.get("/stats", getStats);
+    router.get("/users", listUsersValidator, validate, listUsers);
+    router.post("/users", createUserValidator, validate, createUser);
+    router.get("/users/:id", getUser);
+    router.patch("/users/:id", updateUserValidator, validate, updateUser);
+    router.post("/users/:id/block", blockUser);
+    router.post("/users/:id/unblock", unblockUser);
+    router.delete("/users/:id", deleteUser);
+    router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
+    router.get("/payments", listPayments);
+    router.post("/payments/:id/approve", approvePayment);
+    router.post("/payments/:id/reject", rejectPaymentValidator, validate, rejectPayment);
+    router.get("/shops", listShops);
+    router.post("/shops/:id/approve", approveShop);
+    router.post(
+      "/shops/:id/reject",
+      [body("reason").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("reason must be at most 500 characters")],
+      validate,
+      rejectShop
+    );
+    module2.exports = router;
+  }
+});
+
 // src/controllers/shopkeeper.controller.js
 var require_shopkeeper_controller = __commonJS({
   "src/controllers/shopkeeper.controller.js"(exports2, module2) {
@@ -2730,6 +2839,7 @@ var require_shopkeeper_controller = __commonJS({
     var Shop = require_shop_model();
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
     var { uploadImageBuffer } = require_cloudinary();
+    var { notifyAdmin, notifyUser } = require_mailer();
     var SHOPKEEPER_REGISTRATION_FEE = 1500;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
@@ -2742,7 +2852,10 @@ var require_shopkeeper_controller = __commonJS({
     var listShopkeepers = asyncHandler(async (req, res) => {
       const page = Math.max(Number(req.query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
-      const filter = { isVerified: true, isBlocked: false };
+      const filter = {
+        isBlocked: false,
+        $or: [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false }, isVerified: true }]
+      };
       if (req.query.category) filter.businessCategories = req.query.category;
       if (req.query.search) {
         const search = escapeRegex(req.query.search.trim());
@@ -2842,7 +2955,9 @@ var require_shopkeeper_controller = __commonJS({
         businessCategories: [...new Set(categories)],
         city,
         location: { type: "Point", coordinates: [lng, lat] },
-        registrationFee: SHOPKEEPER_REGISTRATION_FEE
+        registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+        approvalStatus: "pending",
+        isVerified: false
       });
       if (user.role === "shopper") {
         user.role = "shopkeeper";
@@ -2857,6 +2972,17 @@ var require_shopkeeper_controller = __commonJS({
         user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
         await user.save();
       }
+      Promise.all([
+        notifyAdmin({
+          subject: `New shop registration: ${shop.shopName}`,
+          html: `<p>A new shop registration is awaiting review.</p><p><strong>Shop:</strong> ${shop.shopName}<br><strong>Owner:</strong> ${user.name} (${user.email})<br><strong>Location:</strong> ${shop.city}</p><p>Review it in the admin dashboard.</p>`
+        }),
+        notifyUser({
+          to: user.email,
+          subject: `Shop registration received: ${shop.shopName}`,
+          html: `<p>Hi ${user.name},</p><p>Your shop <strong>${shop.shopName}</strong> has been registered and is pending admin review. We will email you again when a decision is made.</p>`
+        })
+      ]).catch((error) => console.error("Failed to notify shop registration parties:", error.message));
       res.status(201).json(
         new ApiResponse(201, { shop, registrationFee: SHOPKEEPER_REGISTRATION_FEE }, "Shop registered successfully")
       );

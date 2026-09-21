@@ -4,6 +4,7 @@ const ApiResponse = require('../utils/ApiResponse');
 const Shop = require('../models/shop.model');
 const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../services/wallet.service');
 const { uploadImageBuffer } = require('../lib/cloudinary');
+const { notifyAdmin, notifyUser } = require('../utils/mailer');
 
 const SHOPKEEPER_REGISTRATION_FEE = 1500;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
@@ -25,7 +26,10 @@ const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const listShopkeepers = asyncHandler(async (req, res) => {
   const page = Math.max(Number(req.query.page) || 1, 1);
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
-  const filter = { isVerified: true, isBlocked: false };
+  const filter = {
+    isBlocked: false,
+    $or: [{ approvalStatus: 'approved' }, { approvalStatus: { $exists: false }, isVerified: true }],
+  };
 
   if (req.query.category) filter.businessCategories = req.query.category;
 
@@ -151,6 +155,8 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     city,
     location: { type: 'Point', coordinates: [lng, lat] },
     registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+    approvalStatus: 'pending',
+    isVerified: false,
   });
 
   // First shop also flips the account into shopkeeper mode and keeps the
@@ -170,6 +176,18 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     user.shopkeeperRegisteredAt = new Date();
     await user.save();
   }
+
+  Promise.all([
+    notifyAdmin({
+      subject: `New shop registration: ${shop.shopName}`,
+      html: `<p>A new shop registration is awaiting review.</p><p><strong>Shop:</strong> ${shop.shopName}<br><strong>Owner:</strong> ${user.name} (${user.email})<br><strong>Location:</strong> ${shop.city}</p><p>Review it in the admin dashboard.</p>`,
+    }),
+    notifyUser({
+      to: user.email,
+      subject: `Shop registration received: ${shop.shopName}`,
+      html: `<p>Hi ${user.name},</p><p>Your shop <strong>${shop.shopName}</strong> has been registered and is pending admin review. We will email you again when a decision is made.</p>`,
+    }),
+  ]).catch((error) => console.error('Failed to notify shop registration parties:', error.message));
 
   res.status(201).json(
     new ApiResponse(201, { shop, registrationFee: SHOPKEEPER_REGISTRATION_FEE }, 'Shop registered successfully')

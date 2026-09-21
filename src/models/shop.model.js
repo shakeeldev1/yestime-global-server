@@ -67,6 +67,26 @@ const shopSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    approvalStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+      index: true,
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     isVerified: {
       type: Boolean,
       default: true,

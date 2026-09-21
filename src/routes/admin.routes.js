@@ -15,6 +15,7 @@ const {
   approvePayment,
   rejectPayment,
 } = require('../controllers/payment.controller');
+const { listShops, approveShop, rejectShop } = require('../controllers/shopAdmin.controller');
 const {
   listUsersValidator,
   createUserValidator,
@@ -22,6 +23,7 @@ const {
   creditWalletValidator,
 } = require('../validators/admin.validator');
 const { rejectPaymentValidator } = require('../validators/wallet.validator');
+const { body } = require('express-validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
@@ -42,5 +44,13 @@ router.post('/users/:id/wallet-credit', creditWalletValidator, validate, creditU
 router.get('/payments', listPayments);
 router.post('/payments/:id/approve', approvePayment);
 router.post('/payments/:id/reject', rejectPaymentValidator, validate, rejectPayment);
+router.get('/shops', listShops);
+router.post('/shops/:id/approve', approveShop);
+router.post(
+  '/shops/:id/reject',
+  [body('reason').optional({ values: 'null' }).trim().isLength({ max: 500 }).withMessage('reason must be at most 500 characters')],
+  validate,
+  rejectShop
+);
 
 module.exports = router;

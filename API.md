@@ -254,7 +254,10 @@ The first category is used as the account's primary business channel for the
 existing purchase flow: `property` maps to property dealer, `car` to car dealer,
 `motorcycle_scooty` to bike dealer, and all other categories to shop.
 
-Response `201` contains the upgraded `user` and `registrationFee: 1500`.
+Response `201` contains the new shop with `approvalStatus: "pending"` and
+`registrationFee: 1500`. The shop is visible to the owner and in the admin
+dashboard, but it is not returned by the public shop directory until an admin
+approves it. The registration fee is not refunded if the shop is rejected.
 Errors: `400` if the caller is not a shopper or has insufficient main-wallet
 balance, and `422` for invalid or missing business details.
 
@@ -267,6 +270,25 @@ omitted, the existing Cloudinary image remains unchanged.
 
 The response contains the updated shop with its Cloudinary URL in
 `businessImage`.
+
+### `GET /admin/shops` 🔒 (admin only)
+
+Lists registered shops for the admin dashboard. Optional query parameters are
+`status=pending|approved|rejected`, `search`, `page`, and `limit`.
+
+### `POST /admin/shops/:id/approve` 🔒 (admin only)
+
+Approves a pending shop. The shop becomes available through the public
+`GET /shopkeepers` directory.
+
+### `POST /admin/shops/:id/reject` 🔒 (admin only)
+
+Rejects a pending shop. Optional request body:
+```json
+{ "reason": "Business details could not be verified" }
+```
+Rejected shops remain visible to the owner and admins with their rejection
+reason, but are not available in the public directory.
 
 ### `GET /shopkeepers`
 
@@ -587,6 +609,9 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | PATCH | `/auth/me` | Yes | Edit current user's profile |
 | POST | `/auth/change-password` | Yes | Change password and revoke sessions |
 | PATCH | `/shopkeepers/:shopId` | Yes (owner) | Update shop details and optionally upload a new image |
+| GET | `/admin/shops` | Yes (admin) | List shops awaiting or having completed admin review |
+| POST | `/admin/shops/:id/approve` | Yes (admin) | Approve a shop for public listing |
+| POST | `/admin/shops/:id/reject` | Yes (admin) | Reject a shop and optionally record a reason |
 | POST | `/tokens/activate` | Yes (shopper) | Pay Rs 100, get first token |
 | GET | `/tokens/me` | Yes | List my tokens |
 | POST | `/purchases` | Yes (shopkeeper) | Record a shop sale, or a dealer-submitted property/car/bike deal |
