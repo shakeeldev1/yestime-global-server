@@ -2674,10 +2674,11 @@ var require_shopAdmin_controller = __commonJS({
       return { page, limit, skip: (page - 1) * limit };
     };
     var listShops = asyncHandler(async (req, res) => {
-      const { status, search } = req.query;
+      const { status, search, owner } = req.query;
       const { page, limit, skip } = paginate(req.query);
       const filter = {};
       if (status) filter.approvalStatus = status;
+      if (owner) filter.owner = owner;
       if (search) {
         filter.$or = [
           { shopName: { $regex: search, $options: "i" } },

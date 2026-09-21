@@ -11,11 +11,12 @@ const paginate = (query) => {
 };
 
 const listShops = asyncHandler(async (req, res) => {
-  const { status, search } = req.query;
+  const { status, search, owner } = req.query;
   const { page, limit, skip } = paginate(req.query);
   const filter = {};
 
   if (status) filter.approvalStatus = status;
+  if (owner) filter.owner = owner;
   if (search) {
     filter.$or = [
       { shopName: { $regex: search, $options: 'i' } },
