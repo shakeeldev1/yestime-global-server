@@ -9,6 +9,13 @@ const SHOPKEEPER_CATEGORIES = [
   'property',
   'crop',
   'self_service_saving',
+  'education',
+  'factory',
+  'foodpoint',
+  'cosmetic',
+  'jewelry',
+  'fruit',
+  'vegetable seller',
 ];
 
 const shopkeeperRegistrationValidator = [
