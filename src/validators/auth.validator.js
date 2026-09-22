@@ -61,7 +61,7 @@ const updateProfileValidator = [
   body('categories').optional().isArray({ min: 1 }).withMessage('categories must contain at least one category'),
   body('categories.*')
     .optional()
-    .isIn(['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving'])
+    .isIn(['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving', 'education', 'factory', 'foodpoint', 'cosmetic', 'jewelry', 'fruit', 'vegetable seller'])
     .withMessage('categories contains an unsupported category'),
 ];
 

@@ -58,7 +58,7 @@ const userSchema = new mongoose.Schema(
     },
     businessCategories: {
       type: [String],
-      enum: ['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving'],
+      enum: ['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving', 'education', 'factory', 'foodpoint', 'cosmetic', 'jewelry', 'fruit', 'vegetable seller'],
       default: [],
     },
     shopkeeperRegistrationFee: {

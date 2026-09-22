@@ -51,7 +51,7 @@ Authorization: Bearer <accessToken>
 
 **Category enum** (`businessCategories` / `category`), used across all shop endpoints:
 ```
-shopping | wholesale | petrol_diesel | motorcycle_scooty | car | property | crop | self_service_saving
+shopping | wholesale | petrol_diesel | motorcycle_scooty | car | property | crop | self_service_saving | education | factory | foodpoint | cosmetic | jewelry | fruit | vegetable seller
 ```
 
 ---
@@ -74,11 +74,27 @@ Content-Type: application/json
 | `phoneNumber` | string | yes | 7–20 chars |
 | `address` | string | yes | max 300 chars, free text |
 | `description` | string | no | max 1000 chars |
-| `image` | string | no | max 500 chars — image URL (upload separately, e.g. via the existing Cloudinary/manual-payment upload flow, then pass the resulting URL here) |
+| `image` | file | no | JPG, PNG, or WEBP image, maximum 5 MB; upload it as the multipart `image` field and it is stored in Cloudinary |
 | `categories` | string[] | yes | at least 1, values from the category enum above |
 | `city` | string | yes | max 100 chars — used for exact city search |
 | `lat` | number | yes | -90 to 90 — device/shop latitude |
 | `lng` | number | yes | -180 to 180 — device/shop longitude |
+
+```text
+Content-Type: multipart/form-data
+
+shopName=Al-Noor Traders
+phoneNumber=03001234567
+address=Shop #12, Liberty Market
+description=Wholesale grocery and daily essentials
+categories=shopping
+categories=wholesale
+city=Lahore
+lat=31.5204
+lng=74.3587
+```
+
+Attach the optional `image` file field. Do not send an image URL.
 
 ```json
 {
@@ -86,7 +102,7 @@ Content-Type: application/json
   "phoneNumber": "03001234567",
   "address": "Shop #12, Liberty Market",
   "description": "Wholesale grocery and daily essentials",
-  "image": "https://res.cloudinary.com/.../shop.jpg",
+  "image": "(multipart file field)",
   "categories": ["shopping", "wholesale"],
   "city": "Lahore",
   "lat": 31.5204,
