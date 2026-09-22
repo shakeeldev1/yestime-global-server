@@ -5,9 +5,9 @@
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
-    "build": "esbuild src/server.js --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.js",
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "build": "node init && esbuild src/server.js --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.js",
+    "start": "node init && node src/server.js",
+    "dev": "node init && nodemon src/server.js",
     "create-admin": "node src/scripts/createAdmin.js",
     "migrate-shops": "node src/scripts/migrateShopsFromUsers.js"
   },

@@ -179,7 +179,7 @@ var require_user_model = __commonJS({
         },
         businessCategories: {
           type: [String],
-          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"],
           default: []
         },
         shopkeeperRegistrationFee: {
@@ -602,7 +602,7 @@ var require_auth_validator = __commonJS({
       body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
       body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
       body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
-      body("categories.*").optional().isIn(["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"]).withMessage("categories contains an unsupported category")
+      body("categories.*").optional().isIn(["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"]).withMessage("categories contains an unsupported category")
     ];
     var changePasswordValidator = [
       body("currentPassword").notEmpty().withMessage("currentPassword is required"),
@@ -1749,6 +1749,13 @@ var require_purchase_model = __commonJS({
             "motorcycle_scooty",
             "crop",
             "self_service_saving",
+            "education",
+            "factory",
+            "foodpoint",
+            "cosmetic",
+            "jewelry",
+            "fruit",
+            "vegetable seller",
             "property",
             "car",
             "bike"
@@ -2006,6 +2013,13 @@ var require_purchase_validator = __commonJS({
         "motorcycle_scooty",
         "crop",
         "self_service_saving",
+        "education",
+        "factory",
+        "foodpoint",
+        "cosmetic",
+        "jewelry",
+        "fruit",
+        "vegetable seller",
         "property",
         "car",
         "bike"
@@ -2597,7 +2611,7 @@ var require_shop_model = __commonJS({
         },
         businessCategories: {
           type: [String],
-          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving"],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"],
           default: []
         },
         // city/location are required on new registrations (enforced by the
@@ -3045,7 +3059,14 @@ var require_shopkeeper_validator = __commonJS({
       "car",
       "property",
       "crop",
-      "self_service_saving"
+      "self_service_saving",
+      "education",
+      "factory",
+      "foodpoint",
+      "cosmetic",
+      "jewelry",
+      "fruit",
+      "vegetable seller"
     ];
     var shopkeeperRegistrationValidator = [
       body("shopName").trim().notEmpty().withMessage("shopName is required").isLength({ max: 120 }).withMessage("shopName must be at most 120 characters"),

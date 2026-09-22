@@ -249,7 +249,9 @@ image is uploaded to Cloudinary and the returned `businessImage` value is the
 Cloudinary secure URL. Do not send an image URL in the request.
 
 Allowed categories are `shopping`, `wholesale`, `petrol_diesel`,
-`motorcycle_scooty`, `car`, `property`, `crop`, and `self_service_saving`.
+`motorcycle_scooty`, `car`, `property`, `crop`, `self_service_saving`,
+`education`, `factory`, `foodpoint`, `cosmetic`, `jewelry`, `fruit`, and
+`vegetable seller`.
 The first category is used as the account's primary business channel for the
 existing purchase flow: `property` maps to property dealer, `car` to car dealer,
 `motorcycle_scooty` to bike dealer, and all other categories to shop.
