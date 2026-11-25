@@ -1,4 +1,5 @@
 const { body } = require('express-validator');
+const { SHOPKEEPER_CATEGORIES } = require('./shopkeeper.validator');
 
 const emailField = body('email').trim().isEmail().withMessage('A valid email is required').normalizeEmail();
 
@@ -61,7 +62,7 @@ const updateProfileValidator = [
   body('categories').optional().isArray({ min: 1 }).withMessage('categories must contain at least one category'),
   body('categories.*')
     .optional()
-    .isIn(['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving', 'education', 'factory', 'foodpoint', 'cosmetic', 'jewelry', 'fruit', 'vegetable seller'])
+    .isIn(SHOPKEEPER_CATEGORIES)
     .withMessage('categories contains an unsupported category'),
 ];
 

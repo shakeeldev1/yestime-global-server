@@ -33,7 +33,6 @@ const updateUserValidator = [
     .optional()
     .isIn(['shop', 'property', 'car', 'bike'])
     .withMessage('Invalid businessType'),
-  body('taxRate').optional().isFloat({ min: 0, max: 100 }).withMessage('taxRate must be between 0 and 100'),
 ];
 
 const creditWalletValidator = [

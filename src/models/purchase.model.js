@@ -50,6 +50,7 @@ const purchaseSchema = new mongoose.Schema(
         'property',
         'car',
         'bike',
+        'other_custom',
       ],
       default: 'shop',
     },

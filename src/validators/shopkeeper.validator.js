@@ -16,6 +16,7 @@ const SHOPKEEPER_CATEGORIES = [
   'jewelry',
   'fruit',
   'vegetable seller',
+  'other_custom',
 ];
 
 const shopkeeperRegistrationValidator = [

@@ -2,7 +2,7 @@
 
 This document covers the endpoints that changed or were added in this update:
 
-1. Shops are no longer one-per-user — a user can register **multiple shops**, each with its own location, for the same flat **Rs 1500** fee.
+1. Shops are no longer one-per-user — a user can register **multiple shops**, each with its own location, for the same flat **Rs 3000** fee.
 2. Shop directory search now supports **location-based filtering** (by city, or by "near me" coordinates).
 3. Token activation (`POST /api/tokens/activate`) now correctly **debits Rs 100 from the user's main wallet** (previously it credited the company side but never took the money from the user — that was a bug, now fixed).
 
@@ -51,14 +51,14 @@ Authorization: Bearer <accessToken>
 
 **Category enum** (`businessCategories` / `category`), used across all shop endpoints:
 ```
-shopping | wholesale | petrol_diesel | motorcycle_scooty | car | property | crop | self_service_saving | education | factory | foodpoint | cosmetic | jewelry | fruit | vegetable seller
+shopping | wholesale | petrol_diesel | motorcycle_scooty | car | property | crop | self_service_saving | education | factory | foodpoint | cosmetic | jewelry | fruit | vegetable seller | other_custom
 ```
 
 ---
 
 ## 2. Register a shop
 
-Registers a new shop for the logged-in user. Can be called repeatedly to add more shops — there is **no limit** on shop count per user, and **every call charges Rs 1500** from the user's main wallet.
+Registers a new shop for the logged-in user. Can be called repeatedly to add more shops — there is **no limit** on shop count per user, and **every call charges Rs 3000** from the user's main wallet.
 
 ```
 POST /api/shopkeepers/register
@@ -128,13 +128,13 @@ Attach the optional `image` file field. Do not send an image URL.
       "businessCategories": ["shopping", "wholesale"],
       "city": "Lahore",
       "location": { "type": "Point", "coordinates": [74.3587, 31.5204] },
-      "registrationFee": 1500,
+      "registrationFee": 3000,
       "isVerified": true,
       "isBlocked": false,
       "createdAt": "2026-09-19T10:00:00.000Z",
       "updatedAt": "2026-09-19T10:00:00.000Z"
     },
-    "registrationFee": 1500
+    "registrationFee": 3000
   },
   "message": "Shop registered successfully",
   "success": true
@@ -148,7 +148,7 @@ Attach the optional `image` file field. Do not send an image URL.
 | Status | Cause |
 |---|---|
 | `400` | `"Only shopper or shopkeeper accounts can register a shop"` — e.g. an admin account |
-| `400` | `"Insufficient main wallet balance for the Rs 1500 shop registration fee"` |
+| `400` | `"Insufficient main wallet balance for the Rs 3000 shop registration fee"` |
 | `422` | Validation failed (see envelope above) — missing/invalid `city`/`lat`/`lng`/etc. |
 | `401` | Missing/invalid/expired access token |
 
@@ -304,7 +304,7 @@ Same field names/limits as registration (section 2), minus `categories` also bei
 
 ## 6. Delete a shop
 
-Owner-only. Permanently removes the shop from the directory. **The Rs 1500 registration fee is not refunded.**
+Owner-only. Permanently removes the shop from the directory. **The Rs 3000 registration fee is not refunded.**
 
 This is a `POST`, not a `DELETE` — same behavior, just a different HTTP method so any client/proxy that has trouble sending `DELETE` still works. `shopId` goes in the request body, not the URL.
 
@@ -409,4 +409,4 @@ Authorization: Bearer <accessToken>
   "success": true
 }
 ```
-`mainBalance` is what both the Rs 1500 shop registration fee and the Rs 100 activation fee are debited from.
+`mainBalance` is what both the Rs 3000 shop registration fee and the Rs 100 activation fee are debited from.

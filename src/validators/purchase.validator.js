@@ -1,6 +1,12 @@
 const { body, query } = require('express-validator');
+const { SHOPKEEPER_CATEGORIES } = require('./shopkeeper.validator');
+
+const PURCHASE_CATEGORIES = [...SHOPKEEPER_CATEGORIES, 'shop', 'bike'];
 
 const recordPurchaseValidator = [
+  body('category')
+    .isIn(PURCHASE_CATEGORIES)
+    .withMessage(`category must be one of ${PURCHASE_CATEGORIES.join(', ')}`),
   body('tokenNumber')
     .trim()
     .isLength({ min: 6, max: 6 })
@@ -38,6 +44,7 @@ const purchaseStatsValidator = [
       'property',
       'car',
       'bike',
+      'other_custom',
     ])
     .withMessage('category is not a supported purchase category'),
   query('from').optional().isISO8601().withMessage('from must be a valid ISO date'),

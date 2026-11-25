@@ -179,7 +179,7 @@ var require_user_model = __commonJS({
         },
         businessCategories: {
           type: [String],
-          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller", "other_custom"],
           default: []
         },
         shopkeeperRegistrationFee: {
@@ -569,10 +569,77 @@ var require_auth_controller = __commonJS({
   }
 });
 
+// src/validators/shopkeeper.validator.js
+var require_shopkeeper_validator = __commonJS({
+  "src/validators/shopkeeper.validator.js"(exports2, module2) {
+    var { body, query, param } = require("express-validator");
+    var SHOPKEEPER_CATEGORIES = [
+      "shopping",
+      "wholesale",
+      "petrol_diesel",
+      "motorcycle_scooty",
+      "car",
+      "property",
+      "crop",
+      "self_service_saving",
+      "education",
+      "factory",
+      "foodpoint",
+      "cosmetic",
+      "jewelry",
+      "fruit",
+      "vegetable seller",
+      "other_custom"
+    ];
+    var shopkeeperRegistrationValidator = [
+      body("shopName").trim().notEmpty().withMessage("shopName is required").isLength({ max: 120 }).withMessage("shopName must be at most 120 characters"),
+      body("phoneNumber").trim().notEmpty().withMessage("phoneNumber is required").isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
+      body("address").trim().notEmpty().withMessage("address is required").isLength({ max: 300 }).withMessage("address must be at most 300 characters"),
+      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
+      body("categories").isArray({ min: 1 }).withMessage("categories must contain at least one category"),
+      body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
+      body("city").trim().notEmpty().withMessage("city is required").isLength({ max: 100 }).withMessage("city must be at most 100 characters"),
+      body("lat").notEmpty().withMessage("lat is required").isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
+      body("lng").notEmpty().withMessage("lng is required").isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
+    ];
+    var shopkeeperDirectoryValidator = [
+      query("category").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage("category is not supported"),
+      query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
+      query("city").optional().trim().isLength({ min: 1, max: 100 }).withMessage("city must be 1 to 100 characters"),
+      query("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90"),
+      query("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180"),
+      query("radiusKm").optional().isFloat({ min: 0.1, max: 1e3 }).withMessage("radiusKm must be between 0.1 and 1000"),
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    var shopUpdateValidator = [
+      param("shopId").isMongoId().withMessage("shopId must be a valid id"),
+      body("shopName").optional().trim().notEmpty().isLength({ max: 120 }).withMessage("shopName must be 1 to 120 characters"),
+      body("phoneNumber").optional().trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
+      body("address").optional().trim().notEmpty().isLength({ max: 300 }).withMessage("address must be 1 to 300 characters"),
+      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
+      body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
+      body("categories.*").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
+      body("city").optional().trim().notEmpty().isLength({ max: 100 }).withMessage("city must be 1 to 100 characters"),
+      body("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
+      body("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
+    ];
+    var shopDeleteValidator = [body("shopId").isMongoId().withMessage("shopId must be a valid id")];
+    module2.exports = {
+      shopkeeperRegistrationValidator,
+      shopkeeperDirectoryValidator,
+      shopUpdateValidator,
+      shopDeleteValidator,
+      SHOPKEEPER_CATEGORIES
+    };
+  }
+});
+
 // src/validators/auth.validator.js
 var require_auth_validator = __commonJS({
   "src/validators/auth.validator.js"(exports2, module2) {
     var { body } = require("express-validator");
+    var { SHOPKEEPER_CATEGORIES } = require_shopkeeper_validator();
     var emailField = body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail();
     var otpField = body("otp").trim().isLength({ min: 6, max: 6 }).withMessage("OTP must be a 6-digit code").isNumeric().withMessage("OTP must be a 6-digit code");
     var signupValidator = [
@@ -602,7 +669,7 @@ var require_auth_validator = __commonJS({
       body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
       body("image").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("image must be at most 500 characters"),
       body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
-      body("categories.*").optional().isIn(["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"]).withMessage("categories contains an unsupported category")
+      body("categories.*").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage("categories contains an unsupported category")
     ];
     var changePasswordValidator = [
       body("currentPassword").notEmpty().withMessage("currentPassword is required"),
@@ -1758,7 +1825,8 @@ var require_purchase_model = __commonJS({
             "vegetable seller",
             "property",
             "car",
-            "bike"
+            "bike",
+            "other_custom"
           ],
           default: "shop"
         },
@@ -1793,13 +1861,140 @@ var require_purchase_model = __commonJS({
   }
 });
 
+// src/models/shop.model.js
+var require_shop_model = __commonJS({
+  "src/models/shop.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var shopSchema = new mongoose.Schema(
+      {
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        businessType: {
+          type: String,
+          enum: ["shop", "property", "car", "bike"],
+          required: true
+        },
+        shopName: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        phoneNumber: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessAddress: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        businessDescription: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessImage: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessCategories: {
+          type: [String],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller", "other_custom"],
+          default: []
+        },
+        // city/location are required on new registrations (enforced by the
+        // registration validator) but left unset on shops backfilled from
+        // legacy user records that never captured a location — those simply
+        // won't surface in city/"near me" searches until the owner sets one.
+        city: {
+          type: String,
+          trim: true,
+          default: null,
+          index: true
+        },
+        location: {
+          type: {
+            type: String,
+            enum: ["Point"]
+          },
+          coordinates: {
+            // [longitude, latitude]
+            type: [Number]
+          }
+        },
+        registrationFee: {
+          type: Number,
+          default: 0
+        },
+        approvalStatus: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          index: true
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        isVerified: {
+          type: Boolean,
+          default: true
+        },
+        isBlocked: {
+          type: Boolean,
+          default: false
+        }
+      },
+      { timestamps: true }
+    );
+    shopSchema.index({ location: "2dsphere" });
+    module2.exports = mongoose.model("Shop", shopSchema);
+  }
+});
+
 // src/utils/commission.js
 var require_commission = __commonJS({
   "src/utils/commission.js"(exports2, module2) {
-    var DEALER_COMPANY_RATE = 1;
+    var DEFAULT_COMPANY_RATE = 2.5;
+    var COMPANY_RATES = {
+      shop: 2.5,
+      shopping: 2.5,
+      wholesale: 2.5,
+      petrol_diesel: 0.5,
+      car: 1,
+      motorcycle_scooty: 1,
+      bike: 1,
+      property: 1,
+      crop: 2.5,
+      self_service_saving: 2.5,
+      education: 2.5,
+      factory: 2.5,
+      foodpoint: 2.5,
+      cosmetic: 2.5,
+      jewelry: 2.5,
+      fruit: 2.5,
+      "vegetable seller": 2.5,
+      other_custom: 2.5
+    };
+    var getCompanyRate = (category) => COMPANY_RATES[category] ?? DEFAULT_COMPANY_RATE;
     var DEALER_OWN_RATE = 1;
-    var SELF_AUTOMATED_COMPANY_RATE = 1;
-    module2.exports = { DEALER_COMPANY_RATE, DEALER_OWN_RATE, SELF_AUTOMATED_COMPANY_RATE };
+    module2.exports = { getCompanyRate, DEALER_OWN_RATE };
   }
 });
 
@@ -1811,9 +2006,10 @@ var require_purchase_controller = __commonJS({
     var ApiResponse = require_ApiResponse();
     var Token = require_token_model();
     var Purchase = require_purchase_model();
+    var Shop = require_shop_model();
     var { debitWallet, creditWallet, creditCompanyWallet } = require_wallet_service();
     var { contributeToActiveToken, getActiveToken } = require_token_service();
-    var { DEALER_COMPANY_RATE, DEALER_OWN_RATE, SELF_AUTOMATED_COMPANY_RATE } = require_commission();
+    var { getCompanyRate, DEALER_OWN_RATE } = require_commission();
     var round2 = (n) => Number(n.toFixed(2));
     var applyPurchase = async ({ payerId, buyerId, amount, companyAmount, meta }) => {
       await debitWallet(payerId, "main", companyAmount, "tax_debit", meta);
@@ -1822,10 +2018,14 @@ var require_purchase_controller = __commonJS({
       return contributeToActiveToken(buyerId, amount);
     };
     var recordPurchase = asyncHandler(async (req, res) => {
-      const { tokenNumber, amount } = req.body;
+      const { tokenNumber, amount, category } = req.body;
       const shopkeeper = req.user;
       if (!shopkeeper.businessType) {
         throw new ApiError(400, "Your account is missing a business type");
+      }
+      const isRegisteredCategory = shopkeeper.businessCategories?.includes(category) || await Shop.exists({ owner: shopkeeper._id, businessCategories: category }) || !shopkeeper.businessCategories?.length && category === shopkeeper.businessType;
+      if (!isRegisteredCategory) {
+        throw new ApiError(400, "You are not registered for this purchase category");
       }
       const token = await Token.findOne({ tokenNumber });
       if (!token) {
@@ -1835,8 +2035,7 @@ var require_purchase_controller = __commonJS({
         throw new ApiError(400, "This token is no longer active; ask the buyer for their current token number");
       }
       const isShop = shopkeeper.businessType === "shop";
-      const purchaseCategory = shopkeeper.businessCategories?.[0] || shopkeeper.businessType;
-      const taxRate = isShop ? shopkeeper.taxRate : DEALER_COMPANY_RATE;
+      const taxRate = getCompanyRate(category);
       const taxAmount = round2(amount * (taxRate / 100));
       const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
       const { leveledUp, completed, newToken } = await applyPurchase({
@@ -1844,7 +2043,7 @@ var require_purchase_controller = __commonJS({
         buyerId: token.owner,
         amount,
         companyAmount: taxAmount,
-        meta: { tokenNumber, amount, category: purchaseCategory }
+        meta: { tokenNumber, amount, category }
       });
       const purchase = await Purchase.create({
         shopper: token.owner,
@@ -1852,7 +2051,7 @@ var require_purchase_controller = __commonJS({
         channel: isShop ? "shopkeeper" : "dealer",
         token: token._id,
         tokenNumber: token.tokenNumber,
-        category: purchaseCategory,
+        category,
         amount,
         taxRate,
         taxAmount,
@@ -1874,7 +2073,7 @@ var require_purchase_controller = __commonJS({
       if (!token) {
         throw new ApiError(400, "You need an active token before recording a purchase \u2014 activate one first");
       }
-      const taxRate = SELF_AUTOMATED_COMPANY_RATE;
+      const taxRate = getCompanyRate(category);
       const taxAmount = round2(amount * (taxRate / 100));
       const { leveledUp, completed, newToken } = await applyPurchase({
         payerId: shopper._id,
@@ -1996,7 +2195,10 @@ var require_purchase_controller = __commonJS({
 var require_purchase_validator = __commonJS({
   "src/validators/purchase.validator.js"(exports2, module2) {
     var { body, query } = require("express-validator");
+    var { SHOPKEEPER_CATEGORIES } = require_shopkeeper_validator();
+    var PURCHASE_CATEGORIES = [...SHOPKEEPER_CATEGORIES, "shop", "bike"];
     var recordPurchaseValidator = [
+      body("category").isIn(PURCHASE_CATEGORIES).withMessage(`category must be one of ${PURCHASE_CATEGORIES.join(", ")}`),
       body("tokenNumber").trim().isLength({ min: 6, max: 6 }).withMessage("Token number must be a 6-digit code").isNumeric().withMessage("Token number must be a 6-digit code"),
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number")
     ];
@@ -2022,7 +2224,8 @@ var require_purchase_validator = __commonJS({
         "vegetable seller",
         "property",
         "car",
-        "bike"
+        "bike",
+        "other_custom"
       ]).withMessage("category is not a supported purchase category"),
       query("from").optional().isISO8601().withMessage("from must be a valid ISO date"),
       query("to").optional().isISO8601().withMessage("to must be a valid ISO date")
@@ -2433,10 +2636,12 @@ var require_admin_controller = __commonJS({
       if (!user) {
         throw new ApiError(404, "User not found");
       }
-      const { name, role, businessType, taxRate } = req.body;
+      const { name, role, businessType } = req.body;
+      if (req.body.taxRate !== void 0) {
+        throw new ApiError(400, "Tax rate is determined by the purchase category and cannot be changed per user");
+      }
       if (name !== void 0) user.name = name;
       if (role !== void 0) user.role = role;
-      if (taxRate !== void 0) user.taxRate = taxRate;
       if (businessType !== void 0) {
         user.businessType = user.role === "shopkeeper" ? businessType : null;
       } else if (role !== void 0 && role !== "shopkeeper") {
@@ -2567,113 +2772,6 @@ var require_admin_controller = __commonJS({
   }
 });
 
-// src/models/shop.model.js
-var require_shop_model = __commonJS({
-  "src/models/shop.model.js"(exports2, module2) {
-    var mongoose = require("mongoose");
-    var shopSchema = new mongoose.Schema(
-      {
-        owner: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true,
-          index: true
-        },
-        businessType: {
-          type: String,
-          enum: ["shop", "property", "car", "bike"],
-          required: true
-        },
-        shopName: {
-          type: String,
-          trim: true,
-          required: true
-        },
-        phoneNumber: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessAddress: {
-          type: String,
-          trim: true,
-          required: true
-        },
-        businessDescription: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessImage: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessCategories: {
-          type: [String],
-          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller"],
-          default: []
-        },
-        // city/location are required on new registrations (enforced by the
-        // registration validator) but left unset on shops backfilled from
-        // legacy user records that never captured a location — those simply
-        // won't surface in city/"near me" searches until the owner sets one.
-        city: {
-          type: String,
-          trim: true,
-          default: null,
-          index: true
-        },
-        location: {
-          type: {
-            type: String,
-            enum: ["Point"]
-          },
-          coordinates: {
-            // [longitude, latitude]
-            type: [Number]
-          }
-        },
-        registrationFee: {
-          type: Number,
-          default: 0
-        },
-        approvalStatus: {
-          type: String,
-          enum: ["pending", "approved", "rejected"],
-          default: "pending",
-          index: true
-        },
-        reviewedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          default: null
-        },
-        reviewedAt: {
-          type: Date,
-          default: null
-        },
-        rejectionReason: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        isVerified: {
-          type: Boolean,
-          default: true
-        },
-        isBlocked: {
-          type: Boolean,
-          default: false
-        }
-      },
-      { timestamps: true }
-    );
-    shopSchema.index({ location: "2dsphere" });
-    module2.exports = mongoose.model("Shop", shopSchema);
-  }
-});
-
 // src/controllers/shopAdmin.controller.js
 var require_shopAdmin_controller = __commonJS({
   "src/controllers/shopAdmin.controller.js"(exports2, module2) {
@@ -2776,8 +2874,7 @@ var require_admin_validator = __commonJS({
     var updateUserValidator = [
       body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
       body("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
-      body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
-      body("taxRate").optional().isFloat({ min: 0, max: 100 }).withMessage("taxRate must be between 0 and 100")
+      body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType")
     ];
     var creditWalletValidator = [
       body("wallet").isIn(["main", "lottery"]).withMessage("wallet must be main or lottery"),
@@ -2855,7 +2952,7 @@ var require_shopkeeper_controller = __commonJS({
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
     var { uploadImageBuffer } = require_cloudinary();
     var { notifyAdmin, notifyUser } = require_mailer();
-    var SHOPKEEPER_REGISTRATION_FEE = 1500;
+    var SHOPKEEPER_REGISTRATION_FEE = 3e3;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
       if (category === "property") return "property";
@@ -2949,7 +3046,7 @@ var require_shopkeeper_controller = __commonJS({
       }
       const wallet = await getOrCreateWallet(user._id);
       if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-        throw new ApiError(400, "Insufficient main wallet balance for the Rs 1500 shop registration fee");
+        throw new ApiError(400, "Insufficient main wallet balance for the Rs 3000 shop registration fee");
       }
       await debitWallet(user._id, "main", SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
         shopName,
@@ -3044,71 +3141,6 @@ var require_shopkeeper_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, null, "Shop deleted successfully"));
     });
     module2.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop, deleteShop };
-  }
-});
-
-// src/validators/shopkeeper.validator.js
-var require_shopkeeper_validator = __commonJS({
-  "src/validators/shopkeeper.validator.js"(exports2, module2) {
-    var { body, query, param } = require("express-validator");
-    var SHOPKEEPER_CATEGORIES = [
-      "shopping",
-      "wholesale",
-      "petrol_diesel",
-      "motorcycle_scooty",
-      "car",
-      "property",
-      "crop",
-      "self_service_saving",
-      "education",
-      "factory",
-      "foodpoint",
-      "cosmetic",
-      "jewelry",
-      "fruit",
-      "vegetable seller"
-    ];
-    var shopkeeperRegistrationValidator = [
-      body("shopName").trim().notEmpty().withMessage("shopName is required").isLength({ max: 120 }).withMessage("shopName must be at most 120 characters"),
-      body("phoneNumber").trim().notEmpty().withMessage("phoneNumber is required").isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
-      body("address").trim().notEmpty().withMessage("address is required").isLength({ max: 300 }).withMessage("address must be at most 300 characters"),
-      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
-      body("categories").isArray({ min: 1 }).withMessage("categories must contain at least one category"),
-      body("categories.*").isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
-      body("city").trim().notEmpty().withMessage("city is required").isLength({ max: 100 }).withMessage("city must be at most 100 characters"),
-      body("lat").notEmpty().withMessage("lat is required").isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
-      body("lng").notEmpty().withMessage("lng is required").isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
-    ];
-    var shopkeeperDirectoryValidator = [
-      query("category").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage("category is not supported"),
-      query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
-      query("city").optional().trim().isLength({ min: 1, max: 100 }).withMessage("city must be 1 to 100 characters"),
-      query("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90"),
-      query("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180"),
-      query("radiusKm").optional().isFloat({ min: 0.1, max: 1e3 }).withMessage("radiusKm must be between 0.1 and 1000"),
-      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
-      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
-    ];
-    var shopUpdateValidator = [
-      param("shopId").isMongoId().withMessage("shopId must be a valid id"),
-      body("shopName").optional().trim().notEmpty().isLength({ max: 120 }).withMessage("shopName must be 1 to 120 characters"),
-      body("phoneNumber").optional().trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
-      body("address").optional().trim().notEmpty().isLength({ max: 300 }).withMessage("address must be 1 to 300 characters"),
-      body("description").optional({ values: "null" }).trim().isLength({ max: 1e3 }).withMessage("description must be at most 1000 characters"),
-      body("categories").optional().isArray({ min: 1 }).withMessage("categories must contain at least one category"),
-      body("categories.*").optional().isIn(SHOPKEEPER_CATEGORIES).withMessage(`categories must contain only: ${SHOPKEEPER_CATEGORIES.join(", ")}`),
-      body("city").optional().trim().notEmpty().isLength({ max: 100 }).withMessage("city must be 1 to 100 characters"),
-      body("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
-      body("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
-    ];
-    var shopDeleteValidator = [body("shopId").isMongoId().withMessage("shopId must be a valid id")];
-    module2.exports = {
-      shopkeeperRegistrationValidator,
-      shopkeeperDirectoryValidator,
-      shopUpdateValidator,
-      shopDeleteValidator,
-      SHOPKEEPER_CATEGORIES
-    };
   }
 });
 

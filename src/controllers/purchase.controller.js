@@ -3,9 +3,10 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const Token = require('../models/token.model');
 const Purchase = require('../models/purchase.model');
+const Shop = require('../models/shop.model');
 const { debitWallet, creditWallet, creditCompanyWallet } = require('../services/wallet.service');
 const { contributeToActiveToken, getActiveToken } = require('../services/token.service');
-const { DEALER_COMPANY_RATE, DEALER_OWN_RATE, SELF_AUTOMATED_COMPANY_RATE } = require('../utils/commission');
+const { getCompanyRate, DEALER_OWN_RATE } = require('../utils/commission');
 
 const round2 = (n) => Number(n.toFixed(2));
 
@@ -24,11 +25,19 @@ const applyPurchase = async ({ payerId, buyerId, amount, companyAmount, meta }) 
 // POST /api/purchases (shopkeeper only — covers both `shop` sales and
 // property/car/bike deals submitted by a registered dealer)
 const recordPurchase = asyncHandler(async (req, res) => {
-  const { tokenNumber, amount } = req.body;
+  const { tokenNumber, amount, category } = req.body;
   const shopkeeper = req.user;
 
   if (!shopkeeper.businessType) {
     throw new ApiError(400, 'Your account is missing a business type');
+  }
+
+  const isRegisteredCategory =
+    shopkeeper.businessCategories?.includes(category) ||
+    (await Shop.exists({ owner: shopkeeper._id, businessCategories: category })) ||
+    (!shopkeeper.businessCategories?.length && category === shopkeeper.businessType);
+  if (!isRegisteredCategory) {
+    throw new ApiError(400, 'You are not registered for this purchase category');
   }
 
   const token = await Token.findOne({ tokenNumber });
@@ -40,8 +49,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
   }
 
   const isShop = shopkeeper.businessType === 'shop';
-  const purchaseCategory = shopkeeper.businessCategories?.[0] || shopkeeper.businessType;
-  const taxRate = isShop ? shopkeeper.taxRate : DEALER_COMPANY_RATE;
+  const taxRate = getCompanyRate(category);
   const taxAmount = round2(amount * (taxRate / 100));
   const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
 
@@ -53,7 +61,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
     buyerId: token.owner,
     amount,
     companyAmount: taxAmount,
-    meta: { tokenNumber, amount, category: purchaseCategory },
+    meta: { tokenNumber, amount, category },
   });
 
   const purchase = await Purchase.create({
@@ -62,7 +70,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
     channel: isShop ? 'shopkeeper' : 'dealer',
     token: token._id,
     tokenNumber: token.tokenNumber,
-    category: purchaseCategory,
+    category,
     amount,
     taxRate,
     taxAmount,
@@ -90,7 +98,7 @@ const recordSelfPurchase = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'You need an active token before recording a purchase — activate one first');
   }
 
-  const taxRate = SELF_AUTOMATED_COMPANY_RATE;
+  const taxRate = getCompanyRate(category);
   const taxAmount = round2(amount * (taxRate / 100));
 
   const { leveledUp, completed, newToken } = await applyPurchase({

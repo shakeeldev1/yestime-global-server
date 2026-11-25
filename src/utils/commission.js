@@ -1,16 +1,30 @@
-// Fixed company-wide rates for the property/car/bike programs (distinct from
-// a shopkeeper's own configurable `taxRate`, which only applies to `shop`
-// purchases). Percentages, e.g. 1 means 1%.
+// Company share of each purchase amount. Unlisted/custom categories use the
+// "Other (custom)" rate. Percentages, e.g. 1 means 1%.
+const DEFAULT_COMPANY_RATE = 2.5;
+const COMPANY_RATES = {
+  shop: 2.5,
+  shopping: 2.5,
+  wholesale: 2.5,
+  petrol_diesel: 0.5,
+  car: 1,
+  motorcycle_scooty: 1,
+  bike: 1,
+  property: 1,
+  crop: 2.5,
+  self_service_saving: 2.5,
+  education: 2.5,
+  factory: 2.5,
+  foodpoint: 2.5,
+  cosmetic: 2.5,
+  jewelry: 2.5,
+  fruit: 2.5,
+  'vegetable seller': 2.5,
+  other_custom: 2.5,
+};
 
-// Via a registered dealer: 2% total commission, split 1% company / 1% dealer.
-// Only the company's 1% ever moves through the app (debited from the
-// dealer's wallet, credited to the company wallet) — the dealer's own 1% is
-// commission they already collected directly from the buyer, outside the app.
-const DEALER_COMPANY_RATE = 1;
+const getCompanyRate = (category) => COMPANY_RATES[category] ?? DEFAULT_COMPANY_RATE;
+
+// A dealer's own 1% is collected directly from the buyer, outside the app.
 const DEALER_OWN_RATE = 1;
 
-// Via the app's "Self Automated" option (no dealer): 1% straight to the
-// company, debited from the shopper's own wallet.
-const SELF_AUTOMATED_COMPANY_RATE = 1;
-
-module.exports = { DEALER_COMPANY_RATE, DEALER_OWN_RATE, SELF_AUTOMATED_COMPANY_RATE };
+module.exports = { getCompanyRate, DEALER_OWN_RATE };

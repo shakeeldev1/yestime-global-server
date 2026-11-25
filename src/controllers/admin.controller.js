@@ -95,11 +95,14 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'User not found');
   }
 
-  const { name, role, businessType, taxRate } = req.body;
+  const { name, role, businessType } = req.body;
+
+  if (req.body.taxRate !== undefined) {
+    throw new ApiError(400, 'Tax rate is determined by the purchase category and cannot be changed per user');
+  }
 
   if (name !== undefined) user.name = name;
   if (role !== undefined) user.role = role;
-  if (taxRate !== undefined) user.taxRate = taxRate;
 
   if (businessType !== undefined) {
     user.businessType = user.role === 'shopkeeper' ? businessType : null;

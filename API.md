@@ -228,7 +228,7 @@ export default api;
 ### `POST /shopkeepers/register` 🔒
 
 Registers the authenticated shopper as a shopkeeper. The account must have at least
-Rs 1,500 in its main wallet. The fee is debited from the user's main wallet and
+Rs 3,000 in its main wallet. The fee is debited from the user's main wallet and
 credited to the company wallet in the same way as other wallet movements. This
 endpoint can only be used once per account.
 
@@ -251,13 +251,15 @@ Cloudinary secure URL. Do not send an image URL in the request.
 Allowed categories are `shopping`, `wholesale`, `petrol_diesel`,
 `motorcycle_scooty`, `car`, `property`, `crop`, `self_service_saving`,
 `education`, `factory`, `foodpoint`, `cosmetic`, `jewelry`, `fruit`, and
-`vegetable seller`.
-The first category is used as the account's primary business channel for the
-existing purchase flow: `property` maps to property dealer, `car` to car dealer,
-`motorcycle_scooty` to bike dealer, and all other categories to shop.
+`vegetable seller`, and `other_custom`.
+The first category determines the account's primary business type:
+`property` maps to property dealer, `car` to car dealer,
+`motorcycle_scooty` to bike dealer, and all other categories to shop. For each
+purchase, send the selected registered category in the request body so the
+backend can use its matching rate.
 
 Response `201` contains the new shop with `approvalStatus: "pending"` and
-`registrationFee: 1500`. The shop is visible to the owner and in the admin
+`registrationFee: 3000`. The shop is visible to the owner and in the admin
 dashboard, but it is not returned by the public shop directory until an admin
 approves it. The registration fee is not refunded if the shop is rejected.
 Errors: `400` if the caller is not a shopper or has insufficient main-wallet
@@ -308,14 +310,18 @@ categories), `search` (matches shop name, address, or description), `page`
 - `role`: `"shopper"` (default) or `"shopkeeper"`. (`"admin"` accounts aren't self-service — they're created directly, not via signup.)
 - `businessType`: **required when `role` is `"shopkeeper"`**, one of `"shop" | "property" | "car" | "bike"` — determines what kind of purchases that account can record via `POST /purchases` (see below).
 
-`GET /auth/me` and every endpoint below now also return `role`, `businessType`, `taxRate` (only meaningful for `businessType: "shop"` — the shopkeeper's commission-tax percentage, default `2.5`; property/car/bike dealers use a fixed 1% instead, not this field), and `hasActivatedToken` (whether a shopper has claimed their first token) on the `user` object.
+`GET /auth/me` and every endpoint below now also return `role`, `businessType`, `taxRate` (a legacy user field; purchase charges are determined by category instead), and `hasActivatedToken` (whether a shopper has claimed their first token) on the `user` object.
 
 ## Wallets, tokens & the savings/lottery program
 
 This is the "purchase savings" system: every shopper gets a 6-digit **token**; purchases recorded against that token build up eligibility for lottery draws. Three balances exist per user:
 - **Main wallet** (`mainBalance`) — real, withdrawable money. For shoppers this grows from lottery wins, and shrinks if they use the self-automated property/car/bike option (see `POST /purchases/self`). For shopkeepers/dealers, this is the balance they top up and that gets debited a company cut on every sale/deal they record.
 - **Lottery wallet** (`lotteryBalance`) — a running, non-withdrawable total of everything ever credited toward lottery eligibility. It's for display/audit; the actual eligibility state lives on the token(s) themselves.
-- **Company wallet** — a single admin-only balance that collects the 2.5% shopkeeper tax and one-time token activation fees.
+- **Company wallet** — a single admin-only balance that collects category-based purchase charges and one-time token activation fees.
+
+Purchase charge rates (company share): Petrol/diesel 0.5%; car, bike, and
+property 1%; all other and custom categories 2.5%. The rate is selected from
+the purchase category and cannot be overridden per user.
 
 ### `POST /tokens/activate` 🔒 (shopper only)
 
@@ -337,14 +343,16 @@ Called by the shopkeeper/dealer (not the shopper) after a real-world, in-person 
 
 Request body:
 ```json
-{ "tokenNumber": "574229", "amount": 1500 }
+{ "tokenNumber": "574229", "amount": 1500, "category": "shopping" }
 ```
-`category` is never passed in the body — it's always derived from the caller's own `businessType`, so a `property` dealer can only ever record `property` deals, etc.
+`category` must be one of the caller's registered business categories. It is
+required so a multi-category shopkeeper can select the right rate for each
+purchase. The backend rejects categories the caller has not registered for.
 
 What happens on success:
 1. A company cut is debited from **the caller's own main wallet** and credited to the company wallet:
-   - `businessType: "shop"` → the shopkeeper's `taxRate` percent (default 2.5%) of `amount`.
-   - `businessType: "property" | "car" | "bike"` → a fixed 1% of `amount` (`channel: "dealer"` on the resulting purchase). The dealer's own 1% commission is *not* modeled here at all — they already collected it directly from the buyer; `dealerCommissionAmount` on the purchase record is informational only, for the dealer's own records.
+   - Purchases → the rate for the selected category (0.5% petrol/diesel, 1% car/bike/property, or 2.5% for other/custom categories).
+   - Property/car/bike dealer purchases → 1% of `amount` (`channel: "dealer"` on the resulting purchase). The dealer's separate 1% is collected directly from the buyer; `dealerCommissionAmount` records that amount but it is not moved through the app.
 2. The full `amount` is credited to the shopper's lottery wallet.
 3. The shopper's currently active token's "pool" absorbs `amount` and unlocks as many sequential levels as it can afford — level *n* requires a cumulative `n × 1000`, so levels 1–30 total exactly 465,000. Whatever doesn't fit a level carries over as leftover pool for the next purchase. Because property/car/bike purchases can be large, a single deal can unlock many levels — even complete a token — in one call.
 4. If this purchase pushes the token through level 30 (465,000 total), that token is marked `completed` (it keeps its unlocked levels forever, for lottery draws) and a **new token** is issued automatically for the same shopper, seeded with any pool overflow.
@@ -365,7 +373,7 @@ Response `201`:
 ```
 When a purchase completes a token, `tokenCompleted` is `true` and `newToken` contains the freshly issued token — surface both to the shopper's UI (e.g. "🎉 token 574229 is fully loaded! Your new token is 486133").
 
-Errors: `400` if the caller's account has no `businessType` set, `404` unknown token number, `400` token exists but isn't active (already completed — ask the buyer for their *current* token number), `400` if the caller's wallet can't cover the company cut (tell them to top up).
+Errors: `400` if the caller's account has no `businessType` set, if the caller is not registered for the selected category, if the token exists but isn't active (already completed — ask the buyer for their *current* token number), or if the caller's wallet can't cover the company cut (tell them to top up); `404` for an unknown token number; `422` for a missing or unsupported category.
 
 ### `POST /purchases/self` 🔒 (shopper only — the app's "Self Automated" option)
 
@@ -377,7 +385,7 @@ Request body:
 ```
 `category` must be `"property" | "car" | "bike"` — this endpoint doesn't cover `shop` purchases (those always go through a shopkeeper's `POST /purchases`).
 
-Same mechanics as above, except: a fixed 1% company commission is debited from **the shopper's own main wallet** (no dealer involved, so no dealer commission at all — `dealerCommissionAmount` is always `0`), and the resulting purchase has `channel: "self"`, `shopkeeper: null`. The shopper needs enough main wallet balance to cover that 1% themselves (submit a manual payment and wait for admin approval first).
+Same mechanics as above, except: the category-based company rate (1% for property/car/bike) is debited from **the shopper's own main wallet** (no dealer involved, so `dealerCommissionAmount` is always `0`), and the resulting purchase has `channel: "self"`, `shopkeeper: null`. The shopper needs enough main wallet balance to cover the charge themselves (submit a manual payment and wait for admin approval first).
 
 Errors: `400` if the shopper has no active token yet (activate one first), `400` if their wallet can't cover the 1% (top up), `422` if `category` isn't one of the three allowed values.
 
@@ -585,7 +593,7 @@ Creates any account directly — including another admin — bypassing the email
 
 ### `PATCH /admin/users/:id` 🔒 (admin only)
 
-Body: any of `{ "name", "role", "businessType", "taxRate" }`. This is also how you promote an existing user to admin — `{ "role": "admin" }`. Changing `role` away from `"shopkeeper"` automatically clears `businessType` to `null`; changing it *to* `"shopkeeper"` requires `businessType` in the same request (`400` otherwise). Does **not** touch `isBlocked` — use the endpoints below for that.
+Body: any of `{ "name", "role", "businessType" }`. This is also how you promote an existing user to admin — `{ "role": "admin" }`. Changing `role` away from `"shopkeeper"` automatically clears `businessType` to `null`; changing it *to* `"shopkeeper"` requires `businessType` in the same request (`400` otherwise). User-specific `taxRate` updates are no longer supported because rates are category-based. Does **not** touch `isBlocked` — use the endpoints below for that.
 
 ### `POST /admin/users/:id/block` / `POST /admin/users/:id/unblock` 🔒 (admin only)
 
@@ -648,7 +656,7 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | POST | `/admin/payments/:id/approve` | Yes (admin) | Approve and credit a manual payment |
 | POST | `/admin/payments/:id/reject` | Yes (admin) | Reject a manual payment |
 | POST | `/admin/users` | Yes (admin) | Create a user directly (any role, pre-verified) |
-| PATCH | `/admin/users/:id` | Yes (admin) | Update name/role/businessType/taxRate |
+| PATCH | `/admin/users/:id` | Yes (admin) | Update name/role/businessType |
 | POST | `/admin/users/:id/block` | Yes (admin) | Block a user (blocks login) |
 | POST | `/admin/users/:id/unblock` | Yes (admin) | Unblock a user |
 | DELETE | `/admin/users/:id` | Yes (admin) | Delete a user (only if no wallet/tokens) |

@@ -6,7 +6,7 @@ const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../serv
 const { uploadImageBuffer } = require('../lib/cloudinary');
 const { notifyAdmin, notifyUser } = require('../utils/mailer');
 
-const SHOPKEEPER_REGISTRATION_FEE = 1500;
+const SHOPKEEPER_REGISTRATION_FEE = 3000;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
 
 const getBusinessType = (category) => {
@@ -110,7 +110,7 @@ const myShops = asyncHandler(async (req, res) => {
 
 // POST /api/shopkeepers/register
 // A user can register any number of shops; each one costs the flat
-// Rs 1500 registration fee, debited from their main wallet.
+// Rs 3000 registration fee, debited from their main wallet.
 const registerShopkeeper = asyncHandler(async (req, res) => {
   const user = req.user;
 
@@ -131,7 +131,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
 
   const wallet = await getOrCreateWallet(user._id);
   if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-    throw new ApiError(400, 'Insufficient main wallet balance for the Rs 1500 shop registration fee');
+    throw new ApiError(400, 'Insufficient main wallet balance for the Rs 3000 shop registration fee');
   }
 
   await debitWallet(user._id, 'main', SHOPKEEPER_REGISTRATION_FEE, 'shopkeeper_registration_fee', {
@@ -233,7 +233,7 @@ const updateShop = asyncHandler(async (req, res) => {
 });
 
 // POST /api/shopkeepers/delete (authenticated, owner only)
-// The Rs 1500 registration fee is not refunded.
+// The Rs 3000 registration fee is not refunded.
 const deleteShop = asyncHandler(async (req, res) => {
   const shop = await Shop.findById(req.body.shopId);
   if (!shop) {
