@@ -325,11 +325,11 @@ the purchase category and cannot be overridden per user.
 
 ### `POST /tokens/activate` 🔒 (shopper only)
 
-One-time action per shopper — pays a flat Rs 1,000 activation fee from the main wallet, credits Rs 21,000 to the lottery balance, and issues the first token with levels 1–6 unlocked. The bonus unlocks eligibility; it is not a draw payout.
+One-time action per shopper — pays a flat Rs 1,000 activation fee from the main wallet, credits Rs 21,000 to the lottery balance, and issues the first token with levels 1–6 unlocked. The bonus unlocks eligibility; it is not a draw payout. Token numbers are assigned globally in ascending order (`000001`, `000002`, `000003`, ...). Previously issued numbers remain unchanged; if a sequence number is already in use, it is skipped to preserve uniqueness.
 
 Response `201`:
 ```json
-{ "statusCode": 201, "data": { "token": { "tokenNumber": "574229", "unlockedLevel": 6, "pool": 0, "status": "active", "generation": 1, "...": "..." }, "bonus": { "lotteryBalance": 21000, "unlockedLevels": [1,2,3,4,5,6] } }, "message": "Token activated successfully", "success": true }
+{ "statusCode": 201, "data": { "token": { "tokenNumber": "000001", "unlockedLevel": 6, "pool": 0, "status": "active", "generation": 1, "...": "..." }, "bonus": { "lotteryBalance": 21000, "unlockedLevels": [1,2,3,4,5,6] } }, "message": "Token activated successfully", "success": true }
 ```
 Errors: `403` if called by a non-shopper, `400` if this shopper already has a token.
 
@@ -343,7 +343,7 @@ Called by the shopkeeper/dealer (not the shopper) after a real-world, in-person 
 
 Request body:
 ```json
-{ "tokenNumber": "574229", "amount": 1500, "category": "shopping" }
+{ "tokenNumber": "000001", "amount": 1500, "category": "shopping" }
 ```
 `category` must be one of the caller's registered business categories. It is
 required so a multi-category shopkeeper can select the right rate for each
@@ -362,7 +362,7 @@ Response `201`:
 {
   "statusCode": 201,
   "data": {
-    "purchase": { "tokenNumber": "574229", "category": "property", "channel": "dealer", "amount": 100000, "taxAmount": 1000, "dealerCommissionAmount": 1000, "leveledUp": [1,2,3], "...": "..." },
+    "purchase": { "tokenNumber": "000001", "category": "property", "channel": "dealer", "amount": 100000, "taxAmount": 1000, "dealerCommissionAmount": 1000, "leveledUp": [1,2,3], "...": "..." },
     "leveledUp": [1, 2, 3],
     "tokenCompleted": false,
     "newToken": null
@@ -371,7 +371,7 @@ Response `201`:
   "success": true
 }
 ```
-When a purchase completes a token, `tokenCompleted` is `true` and `newToken` contains the freshly issued token — surface both to the shopper's UI (e.g. "🎉 token 574229 is fully loaded! Your new token is 486133").
+When a purchase completes a token, `tokenCompleted` is `true` and `newToken` contains the freshly issued token — surface both to the shopper's UI (e.g. "🎉 token 000001 is fully loaded! Your new token is 000002").
 
 Errors: `400` if the caller's account has no `businessType` set, if the caller is not registered for the selected category, if the token exists but isn't active (already completed — ask the buyer for their *current* token number), or if the caller's wallet can't cover the company cut (tell them to top up); `404` for an unknown token number; `422` for a missing or unsupported category.
 

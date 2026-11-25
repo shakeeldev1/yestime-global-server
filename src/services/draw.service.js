@@ -1,7 +1,7 @@
 const Token = require('../models/token.model');
 const Draw = require('../models/draw.model');
 const env = require('../config/env');
-const { generateTokenNumber } = require('../utils/tokenNumber');
+const { generateDrawNumber } = require('../utils/drawNumber');
 const { creditWallet } = require('./wallet.service');
 
 /**
@@ -18,7 +18,7 @@ const { creditWallet } = require('./wallet.service');
  */
 const runDraw = async ({ forceWinningNumber } = {}) => {
   const winningNumber =
-    env.NODE_ENV !== 'production' && forceWinningNumber ? forceWinningNumber : generateTokenNumber();
+    env.NODE_ENV !== 'production' && forceWinningNumber ? forceWinningNumber : generateDrawNumber();
 
   const winningToken = await Token.findOne({ tokenNumber: winningNumber, unlockedLevel: { $gte: 1 } });
 
