@@ -1,18 +1,23 @@
 const Token = require('../models/token.model');
-const { generateTokenNumber } = require('../utils/tokenNumber');
+const TokenNumberSequence = require('../models/tokenNumberSequence.model');
 const { applyPoolContribution } = require('../utils/levels');
-
-const MAX_GENERATION_ATTEMPTS = 10;
+const ApiError = require('../utils/ApiError');
 
 const createTokenForOwner = async (ownerId, { generation = 1, pool = 0, session } = {}) => {
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
-    const tokenNumber = generateTokenNumber();
+  while (true) {
     try {
-      if (session) {
-        // eslint-disable-next-line no-await-in-loop
-        const existingToken = await Token.exists({ tokenNumber }).session(session);
-        if (existingToken) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const sequence = await TokenNumberSequence.increment(session);
+      if (!sequence) {
+        throw new ApiError(503, 'The six-digit token number sequence is exhausted or unavailable');
       }
+
+      const tokenNumber = String(sequence.value).padStart(6, '0');
+      const existingTokenQuery = Token.exists({ tokenNumber });
+      if (session) existingTokenQuery.session(session);
+
+      // eslint-disable-next-line no-await-in-loop
+      if (await existingTokenQuery) continue;
 
       // eslint-disable-next-line no-await-in-loop
       const [token] = await Token.create([{
@@ -23,13 +28,12 @@ const createTokenForOwner = async (ownerId, { generation = 1, pool = 0, session 
       }], session ? { session } : {});
       return token;
     } catch (error) {
-      if (!session && error.code === 11000 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
-        continue; // token number collision, retry with a fresh number
+      if (!session && error.code === 11000) {
+        continue;
       }
       throw error;
     }
   }
-  throw new Error('Failed to generate a unique token number');
 };
 
 const getActiveToken = (ownerId, { session } = {}) => {

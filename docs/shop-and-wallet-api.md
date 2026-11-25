@@ -358,6 +358,8 @@ No request body.
 
 This one-time action debits **Rs 1,000 from the user's main wallet**, credits **Rs 21,000 to their lottery balance**, and issues the first token at level 6 (levels 1–6 unlocked). The bonus is an eligibility contribution, not a draw payout. Later tokens created after the active token completes do not receive this bonus. These wallet, token, and account updates are committed together.
 
+Token numbers are assigned globally in ascending order, starting at `000001` (`000001`, `000002`, `000003`, ...). Previously issued numbers are not changed; any number already in use is skipped so token numbers remain unique.
+
 ### Success response — `201 Created`
 
 ```json
@@ -366,7 +368,7 @@ This one-time action debits **Rs 1,000 from the user's main wallet**, credits **
   "data": {
     "token": {
       "_id": "66f3...",
-      "tokenNumber": "YT-000123",
+      "tokenNumber": "000001",
       "owner": "66f0...userid",
       "generation": 1,
       "unlockedLevel": 6,

@@ -1,10 +1,12 @@
 const app = require('./app');
 const connectDB = require('./config/db');
 const env = require('./config/env');
+const TokenNumberSequence = require('./models/tokenNumberSequence.model');
 const drawScheduler = require('./services/scheduler.service');
 
 const startServer = async () => {
   await connectDB();
+  await TokenNumberSequence.ensureInitialized();
 
   const server = app.listen(env.PORT, () => {
     console.log(`Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);

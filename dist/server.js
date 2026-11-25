@@ -1027,12 +1027,49 @@ var require_token_model = __commonJS({
   }
 });
 
-// src/utils/tokenNumber.js
-var require_tokenNumber = __commonJS({
-  "src/utils/tokenNumber.js"(exports2, module2) {
-    var crypto = require("crypto");
-    var generateTokenNumber = () => crypto.randomInt(0, 1e6).toString().padStart(6, "0");
-    module2.exports = { generateTokenNumber };
+// src/models/tokenNumberSequence.model.js
+var require_tokenNumberSequence_model = __commonJS({
+  "src/models/tokenNumberSequence.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var TOKEN_SEQUENCE_ID = "token_number";
+    var MAX_TOKEN_NUMBER = 999999;
+    var tokenNumberSequenceSchema = new mongoose.Schema(
+      {
+        _id: {
+          type: String,
+          default: TOKEN_SEQUENCE_ID
+        },
+        value: {
+          type: Number,
+          required: true,
+          default: 0,
+          min: 0,
+          max: MAX_TOKEN_NUMBER
+        }
+      },
+      { versionKey: false }
+    );
+    tokenNumberSequenceSchema.statics.ensureInitialized = async function ensureInitialized() {
+      try {
+        await this.updateOne(
+          { _id: TOKEN_SEQUENCE_ID },
+          { $setOnInsert: { value: 0 } },
+          { upsert: true }
+        );
+      } catch (error) {
+        if (error.code !== 11e3) throw error;
+        const sequence = await this.exists({ _id: TOKEN_SEQUENCE_ID });
+        if (!sequence) throw error;
+      }
+    };
+    tokenNumberSequenceSchema.statics.increment = function increment(session) {
+      return this.findOneAndUpdate(
+        { _id: TOKEN_SEQUENCE_ID, value: { $lt: MAX_TOKEN_NUMBER } },
+        { $inc: { value: 1 } },
+        { new: true, ...session ? { session } : {} }
+      );
+    };
+    module2.exports = mongoose.model("TokenNumberSequence", tokenNumberSequenceSchema);
   }
 });
 
@@ -1067,17 +1104,20 @@ var require_levels = __commonJS({
 var require_token_service = __commonJS({
   "src/services/token.service.js"(exports2, module2) {
     var Token = require_token_model();
-    var { generateTokenNumber } = require_tokenNumber();
+    var TokenNumberSequence2 = require_tokenNumberSequence_model();
     var { applyPoolContribution } = require_levels();
-    var MAX_GENERATION_ATTEMPTS = 10;
+    var ApiError = require_ApiError();
     var createTokenForOwner = async (ownerId, { generation = 1, pool = 0, session } = {}) => {
-      for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
-        const tokenNumber = generateTokenNumber();
+      while (true) {
         try {
-          if (session) {
-            const existingToken = await Token.exists({ tokenNumber }).session(session);
-            if (existingToken) continue;
+          const sequence = await TokenNumberSequence2.increment(session);
+          if (!sequence) {
+            throw new ApiError(503, "The six-digit token number sequence is exhausted or unavailable");
           }
+          const tokenNumber = String(sequence.value).padStart(6, "0");
+          const existingTokenQuery = Token.exists({ tokenNumber });
+          if (session) existingTokenQuery.session(session);
+          if (await existingTokenQuery) continue;
           const [token] = await Token.create([{
             tokenNumber,
             owner: ownerId,
@@ -1086,13 +1126,12 @@ var require_token_service = __commonJS({
           }], session ? { session } : {});
           return token;
         } catch (error) {
-          if (!session && error.code === 11e3 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
+          if (!session && error.code === 11e3) {
             continue;
           }
           throw error;
         }
       }
-      throw new Error("Failed to generate a unique token number");
     };
     var getActiveToken = (ownerId, { session } = {}) => {
       const query = Token.findOne({ owner: ownerId, status: "active" });
@@ -2359,16 +2398,25 @@ var require_draw_model = __commonJS({
   }
 });
 
+// src/utils/drawNumber.js
+var require_drawNumber = __commonJS({
+  "src/utils/drawNumber.js"(exports2, module2) {
+    var crypto = require("crypto");
+    var generateDrawNumber = () => crypto.randomInt(0, 1e6).toString().padStart(6, "0");
+    module2.exports = { generateDrawNumber };
+  }
+});
+
 // src/services/draw.service.js
 var require_draw_service = __commonJS({
   "src/services/draw.service.js"(exports2, module2) {
     var Token = require_token_model();
     var Draw = require_draw_model();
     var env2 = require_env();
-    var { generateTokenNumber } = require_tokenNumber();
+    var { generateDrawNumber } = require_drawNumber();
     var { creditWallet } = require_wallet_service();
     var runDraw = async ({ forceWinningNumber } = {}) => {
-      const winningNumber = env2.NODE_ENV !== "production" && forceWinningNumber ? forceWinningNumber : generateTokenNumber();
+      const winningNumber = env2.NODE_ENV !== "production" && forceWinningNumber ? forceWinningNumber : generateDrawNumber();
       const winningToken = await Token.findOne({ tokenNumber: winningNumber, unlockedLevel: { $gte: 1 } });
       if (!winningToken) {
         return Draw.create({ winningNumber, winnerToken: null, winnerUser: null, rewardLevel: 0, rewardAmount: 0 });
@@ -3390,9 +3438,11 @@ var require_db = __commonJS({
 var app = require_app();
 var connectDB = require_db();
 var env = require_env();
+var TokenNumberSequence = require_tokenNumberSequence_model();
 var drawScheduler = require_scheduler_service();
 var startServer = async () => {
   await connectDB();
+  await TokenNumberSequence.ensureInitialized();
   const server = app.listen(env.PORT, () => {
     console.log(`Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
   });
