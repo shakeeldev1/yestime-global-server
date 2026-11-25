@@ -4,7 +4,7 @@ This document covers the endpoints that changed or were added in this update:
 
 1. Shops are no longer one-per-user — a user can register **multiple shops**, each with its own location, for the same flat **Rs 3000** fee.
 2. Shop directory search now supports **location-based filtering** (by city, or by "near me" coordinates).
-3. Token activation (`POST /api/tokens/activate`) now correctly **debits Rs 100 from the user's main wallet** (previously it credited the company side but never took the money from the user — that was a bug, now fixed).
+3. Token activation (`POST /api/tokens/activate`) **debits Rs 1,000 from the user's main wallet** and grants a one-time Rs 21,000 lottery-balance bonus, unlocking the first six levels of the first token.
 
 ---
 
@@ -347,7 +347,7 @@ Content-Type: application/json
 
 ---
 
-## 7. Token activation (bug fix — now deducts wallet balance)
+## 7. Token activation
 
 ```
 POST /api/tokens/activate
@@ -356,7 +356,7 @@ Authorization: Bearer <accessToken>
 
 No request body.
 
-**What changed:** this endpoint now debits **Rs 100 from the user's main wallet** before issuing the token (previously it issued the token without taking any money from the user — that was a bug). If the app was showing/assuming a wallet deduction already, no client-side change should be needed; just be aware the balance will now actually drop after a successful call, and the call can now fail with an insufficient-balance error it never returned before.
+This one-time action debits **Rs 1,000 from the user's main wallet**, credits **Rs 21,000 to their lottery balance**, and issues the first token at level 6 (levels 1–6 unlocked). The bonus is an eligibility contribution, not a draw payout. Later tokens created after the active token completes do not receive this bonus. These wallet, token, and account updates are committed together.
 
 ### Success response — `201 Created`
 
@@ -369,11 +369,15 @@ No request body.
       "tokenNumber": "YT-000123",
       "owner": "66f0...userid",
       "generation": 1,
-      "unlockedLevel": 0,
+      "unlockedLevel": 6,
       "pool": 0,
       "status": "active",
       "completedAt": null,
       "createdAt": "2026-09-19T10:00:00.000Z"
+    },
+    "bonus": {
+      "lotteryBalance": 21000,
+      "unlockedLevels": [1, 2, 3, 4, 5, 6]
     }
   },
   "message": "Token activated successfully",
@@ -386,8 +390,8 @@ No request body.
 | Status | Cause |
 |---|---|
 | `403` | `"Only shopper accounts can activate a token"` |
-| `400` | `"Your account already has an active token"` |
-| `400` | **New:** `"Insufficient main wallet balance for the Rs 100 activation fee"` — show a top-up prompt here |
+| `400` | `"Your account has already activated its first token"` |
+| `400` | `"Insufficient main wallet balance for the Rs 1,000 activation fee"` — show a top-up prompt here |
 
 To check balance before calling this (e.g. to disable the button / show a top-up CTA proactively), use the existing wallet endpoint:
 ```
@@ -409,4 +413,4 @@ Authorization: Bearer <accessToken>
   "success": true
 }
 ```
-`mainBalance` is what both the Rs 3000 shop registration fee and the Rs 100 activation fee are debited from.
+`mainBalance` is what both the Rs 3,000 shop registration fee and the Rs 1,000 activation fee are debited from. The first activation also adds Rs 21,000 to `lotteryBalance`; later token generations receive no activation bonus.

@@ -3,23 +3,27 @@ const WalletTransaction = require('../models/walletTransaction.model');
 const CompanyWallet = require('../models/companyWallet.model');
 const ApiError = require('../utils/ApiError');
 
-const getOrCreateWallet = async (userId) => {
-  let wallet = await Wallet.findOne({ user: userId });
+const getOrCreateWallet = async (userId, { session } = {}) => {
+  const query = Wallet.findOne({ user: userId });
+  if (session) query.session(session);
+
+  let wallet = await query;
   if (!wallet) {
-    wallet = await Wallet.create({ user: userId });
+    wallet = new Wallet({ user: userId });
+    await wallet.save(session ? { session } : {});
   }
   return wallet;
 };
 
 const BALANCE_FIELD = { main: 'mainBalance', lottery: 'lotteryBalance' };
 
-const creditWallet = async (userId, walletName, amount, type, meta = {}) => {
+const creditWallet = async (userId, walletName, amount, type, meta = {}, { session } = {}) => {
   const field = BALANCE_FIELD[walletName];
-  const wallet = await getOrCreateWallet(userId);
+  const wallet = await getOrCreateWallet(userId, { session });
   wallet[field] += amount;
-  await wallet.save();
+  await wallet.save(session ? { session } : {});
 
-  await WalletTransaction.create({
+  await WalletTransaction.create([{
     user: userId,
     wallet: walletName,
     direction: 'credit',
@@ -27,21 +31,21 @@ const creditWallet = async (userId, walletName, amount, type, meta = {}) => {
     amount,
     balanceAfter: wallet[field],
     meta,
-  });
+  }], session ? { session } : {});
 
   return wallet;
 };
 
-const debitWallet = async (userId, walletName, amount, type, meta = {}) => {
+const debitWallet = async (userId, walletName, amount, type, meta = {}, { session } = {}) => {
   const field = BALANCE_FIELD[walletName];
-  const wallet = await getOrCreateWallet(userId);
+  const wallet = await getOrCreateWallet(userId, { session });
   if (wallet[field] < amount) {
     throw new ApiError(400, `Insufficient ${walletName} wallet balance`);
   }
   wallet[field] -= amount;
-  await wallet.save();
+  await wallet.save(session ? { session } : {});
 
-  await WalletTransaction.create({
+  await WalletTransaction.create([{
     user: userId,
     wallet: walletName,
     direction: 'debit',
@@ -49,17 +53,17 @@ const debitWallet = async (userId, walletName, amount, type, meta = {}) => {
     amount,
     balanceAfter: wallet[field],
     meta,
-  });
+  }], session ? { session } : {});
 
   return wallet;
 };
 
-const creditCompanyWallet = async (triggeredByUserId, amount, type, meta = {}) => {
-  const company = await CompanyWallet.getSingleton();
+const creditCompanyWallet = async (triggeredByUserId, amount, type, meta = {}, { session } = {}) => {
+  const company = await CompanyWallet.getSingleton({ session });
   company.balance += amount;
-  await company.save();
+  await company.save(session ? { session } : {});
 
-  await WalletTransaction.create({
+  await WalletTransaction.create([{
     user: triggeredByUserId,
     wallet: 'company',
     direction: 'credit',
@@ -67,7 +71,7 @@ const creditCompanyWallet = async (triggeredByUserId, amount, type, meta = {}) =
     amount,
     balanceAfter: company.balance,
     meta,
-  });
+  }], session ? { session } : {});
 
   return company;
 };

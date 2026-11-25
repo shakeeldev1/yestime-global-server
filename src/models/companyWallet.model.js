@@ -16,11 +16,11 @@ const companyWalletSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-companyWalletSchema.statics.getSingleton = async function getSingleton() {
+companyWalletSchema.statics.getSingleton = async function getSingleton({ session } = {}) {
   return this.findOneAndUpdate(
     { key: 'company' },
     { $setOnInsert: { balance: 0 } },
-    { upsert: true, new: true }
+    { upsert: true, new: true, ...(session ? { session } : {}) }
   );
 };
 

@@ -4,18 +4,26 @@ const { applyPoolContribution } = require('../utils/levels');
 
 const MAX_GENERATION_ATTEMPTS = 10;
 
-const createTokenForOwner = async (ownerId, { generation = 1, pool = 0 } = {}) => {
+const createTokenForOwner = async (ownerId, { generation = 1, pool = 0, session } = {}) => {
   for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
+    const tokenNumber = generateTokenNumber();
     try {
+      if (session) {
+        // eslint-disable-next-line no-await-in-loop
+        const existingToken = await Token.exists({ tokenNumber }).session(session);
+        if (existingToken) continue;
+      }
+
       // eslint-disable-next-line no-await-in-loop
-      return await Token.create({
-        tokenNumber: generateTokenNumber(),
+      const [token] = await Token.create([{
+        tokenNumber,
         owner: ownerId,
         generation,
         pool,
-      });
+      }], session ? { session } : {});
+      return token;
     } catch (error) {
-      if (error.code === 11000 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
+      if (!session && error.code === 11000 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
         continue; // token number collision, retry with a fresh number
       }
       throw error;
@@ -24,15 +32,18 @@ const createTokenForOwner = async (ownerId, { generation = 1, pool = 0 } = {}) =
   throw new Error('Failed to generate a unique token number');
 };
 
-const getActiveToken = (ownerId) => Token.findOne({ owner: ownerId, status: 'active' });
+const getActiveToken = (ownerId, { session } = {}) => {
+  const query = Token.findOne({ owner: ownerId, status: 'active' });
+  return session ? query.session(session) : query;
+};
 
 /**
  * Feeds `amount` into the owner's currently active token, unlocking levels as
  * far as the pool allows. If the token completes all 30 levels, it is closed
  * out and a new token is created for the owner, seeded with any pool overflow.
  */
-const contributeToActiveToken = async (ownerId, amount) => {
-  const token = await getActiveToken(ownerId);
+const contributeToActiveToken = async (ownerId, amount, { session } = {}) => {
+  const token = await getActiveToken(ownerId, { session });
   if (!token) {
     throw new Error(`User ${ownerId} has no active token to contribute to`);
   }
@@ -48,18 +59,19 @@ const contributeToActiveToken = async (ownerId, amount) => {
     token.pool = 0;
     token.status = 'completed';
     token.completedAt = new Date();
-    await token.save();
+    await token.save(session ? { session } : {});
 
     const newToken = await createTokenForOwner(ownerId, {
       generation: token.generation + 1,
       pool: result.pool,
+      session,
     });
 
     return { token, newToken, leveledUp: result.leveledUp, completed: true };
   }
 
   token.pool = result.pool;
-  await token.save();
+  await token.save(session ? { session } : {});
 
   return { token, newToken: null, leveledUp: result.leveledUp, completed: false };
 };

@@ -806,11 +806,11 @@ var require_companyWallet_model = __commonJS({
       },
       { timestamps: true }
     );
-    companyWalletSchema.statics.getSingleton = async function getSingleton() {
+    companyWalletSchema.statics.getSingleton = async function getSingleton({ session } = {}) {
       return this.findOneAndUpdate(
         { key: "company" },
         { $setOnInsert: { balance: 0 } },
-        { upsert: true, new: true }
+        { upsert: true, new: true, ...session ? { session } : {} }
       );
     };
     module2.exports = mongoose.model("CompanyWallet", companyWalletSchema);
@@ -843,6 +843,7 @@ var require_walletTransaction_model = __commonJS({
           enum: [
             "topup",
             "activation_fee",
+            "activation_bonus",
             "shopkeeper_registration_fee",
             "tax_debit",
             "admin_credit",
@@ -913,20 +914,23 @@ var require_wallet_service = __commonJS({
     var WalletTransaction = require_walletTransaction_model();
     var CompanyWallet = require_companyWallet_model();
     var ApiError = require_ApiError();
-    var getOrCreateWallet = async (userId) => {
-      let wallet = await Wallet.findOne({ user: userId });
+    var getOrCreateWallet = async (userId, { session } = {}) => {
+      const query = Wallet.findOne({ user: userId });
+      if (session) query.session(session);
+      let wallet = await query;
       if (!wallet) {
-        wallet = await Wallet.create({ user: userId });
+        wallet = new Wallet({ user: userId });
+        await wallet.save(session ? { session } : {});
       }
       return wallet;
     };
     var BALANCE_FIELD = { main: "mainBalance", lottery: "lotteryBalance" };
-    var creditWallet = async (userId, walletName, amount, type, meta = {}) => {
+    var creditWallet = async (userId, walletName, amount, type, meta = {}, { session } = {}) => {
       const field = BALANCE_FIELD[walletName];
-      const wallet = await getOrCreateWallet(userId);
+      const wallet = await getOrCreateWallet(userId, { session });
       wallet[field] += amount;
-      await wallet.save();
-      await WalletTransaction.create({
+      await wallet.save(session ? { session } : {});
+      await WalletTransaction.create([{
         user: userId,
         wallet: walletName,
         direction: "credit",
@@ -934,18 +938,18 @@ var require_wallet_service = __commonJS({
         amount,
         balanceAfter: wallet[field],
         meta
-      });
+      }], session ? { session } : {});
       return wallet;
     };
-    var debitWallet = async (userId, walletName, amount, type, meta = {}) => {
+    var debitWallet = async (userId, walletName, amount, type, meta = {}, { session } = {}) => {
       const field = BALANCE_FIELD[walletName];
-      const wallet = await getOrCreateWallet(userId);
+      const wallet = await getOrCreateWallet(userId, { session });
       if (wallet[field] < amount) {
         throw new ApiError(400, `Insufficient ${walletName} wallet balance`);
       }
       wallet[field] -= amount;
-      await wallet.save();
-      await WalletTransaction.create({
+      await wallet.save(session ? { session } : {});
+      await WalletTransaction.create([{
         user: userId,
         wallet: walletName,
         direction: "debit",
@@ -953,14 +957,14 @@ var require_wallet_service = __commonJS({
         amount,
         balanceAfter: wallet[field],
         meta
-      });
+      }], session ? { session } : {});
       return wallet;
     };
-    var creditCompanyWallet = async (triggeredByUserId, amount, type, meta = {}) => {
-      const company = await CompanyWallet.getSingleton();
+    var creditCompanyWallet = async (triggeredByUserId, amount, type, meta = {}, { session } = {}) => {
+      const company = await CompanyWallet.getSingleton({ session });
       company.balance += amount;
-      await company.save();
-      await WalletTransaction.create({
+      await company.save(session ? { session } : {});
+      await WalletTransaction.create([{
         user: triggeredByUserId,
         wallet: "company",
         direction: "credit",
@@ -968,7 +972,7 @@ var require_wallet_service = __commonJS({
         amount,
         balanceAfter: company.balance,
         meta
-      });
+      }], session ? { session } : {});
       return company;
     };
     module2.exports = { getOrCreateWallet, creditWallet, debitWallet, creditCompanyWallet };
@@ -1066,17 +1070,23 @@ var require_token_service = __commonJS({
     var { generateTokenNumber } = require_tokenNumber();
     var { applyPoolContribution } = require_levels();
     var MAX_GENERATION_ATTEMPTS = 10;
-    var createTokenForOwner = async (ownerId, { generation = 1, pool = 0 } = {}) => {
+    var createTokenForOwner = async (ownerId, { generation = 1, pool = 0, session } = {}) => {
       for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt += 1) {
+        const tokenNumber = generateTokenNumber();
         try {
-          return await Token.create({
-            tokenNumber: generateTokenNumber(),
+          if (session) {
+            const existingToken = await Token.exists({ tokenNumber }).session(session);
+            if (existingToken) continue;
+          }
+          const [token] = await Token.create([{
+            tokenNumber,
             owner: ownerId,
             generation,
             pool
-          });
+          }], session ? { session } : {});
+          return token;
         } catch (error) {
-          if (error.code === 11e3 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
+          if (!session && error.code === 11e3 && attempt < MAX_GENERATION_ATTEMPTS - 1) {
             continue;
           }
           throw error;
@@ -1084,9 +1094,12 @@ var require_token_service = __commonJS({
       }
       throw new Error("Failed to generate a unique token number");
     };
-    var getActiveToken = (ownerId) => Token.findOne({ owner: ownerId, status: "active" });
-    var contributeToActiveToken = async (ownerId, amount) => {
-      const token = await getActiveToken(ownerId);
+    var getActiveToken = (ownerId, { session } = {}) => {
+      const query = Token.findOne({ owner: ownerId, status: "active" });
+      return session ? query.session(session) : query;
+    };
+    var contributeToActiveToken = async (ownerId, amount, { session } = {}) => {
+      const token = await getActiveToken(ownerId, { session });
       if (!token) {
         throw new Error(`User ${ownerId} has no active token to contribute to`);
       }
@@ -1099,15 +1112,16 @@ var require_token_service = __commonJS({
         token.pool = 0;
         token.status = "completed";
         token.completedAt = /* @__PURE__ */ new Date();
-        await token.save();
+        await token.save(session ? { session } : {});
         const newToken = await createTokenForOwner(ownerId, {
           generation: token.generation + 1,
-          pool: result.pool
+          pool: result.pool,
+          session
         });
         return { token, newToken, leveledUp: result.leveledUp, completed: true };
       }
       token.pool = result.pool;
-      await token.save();
+      await token.save(session ? { session } : {});
       return { token, newToken: null, leveledUp: result.leveledUp, completed: false };
     };
     module2.exports = { createTokenForOwner, getActiveToken, contributeToActiveToken };
@@ -1124,9 +1138,15 @@ var require_wallet_controller = __commonJS({
     var CompanyWallet = require_companyWallet_model();
     var WalletTransaction = require_walletTransaction_model();
     var mongoose = require("mongoose");
-    var { getOrCreateWallet, debitWallet, creditCompanyWallet } = require_wallet_service();
-    var { createTokenForOwner } = require_token_service();
-    var ACTIVATION_FEE = 100;
+    var {
+      getOrCreateWallet,
+      debitWallet,
+      creditWallet,
+      creditCompanyWallet
+    } = require_wallet_service();
+    var { createTokenForOwner, contributeToActiveToken } = require_token_service();
+    var ACTIVATION_FEE = 1e3;
+    var INITIAL_LOTTERY_BONUS = 21e3;
     var myWallet = asyncHandler(async (req, res) => {
       const wallet = await getOrCreateWallet(req.user._id);
       res.status(200).json(new ApiResponse(200, { wallet }, "Wallet fetched successfully"));
@@ -1190,17 +1210,51 @@ var require_wallet_controller = __commonJS({
         throw new ApiError(403, "Only shopper accounts can activate a token");
       }
       if (req.user.hasActivatedToken) {
-        throw new ApiError(400, "Your account already has an active token");
+        throw new ApiError(400, "Your account has already activated its first token");
       }
-      const wallet = await getOrCreateWallet(req.user._id);
-      if (wallet.mainBalance < ACTIVATION_FEE) {
-        throw new ApiError(400, "Insufficient main wallet balance for the Rs 100 activation fee");
+      const session = await mongoose.startSession();
+      let activation;
+      try {
+        await session.withTransaction(async () => {
+          const user = await User.findOneAndUpdate(
+            { _id: req.user._id, role: "shopper", hasActivatedToken: { $ne: true } },
+            { $set: { hasActivatedToken: true } },
+            { new: true, session }
+          );
+          if (!user) {
+            throw new ApiError(400, "Your account has already activated its first token");
+          }
+          const wallet = await getOrCreateWallet(user._id, { session });
+          if (wallet.mainBalance < ACTIVATION_FEE) {
+            throw new ApiError(400, "Insufficient main wallet balance for the Rs 1,000 activation fee");
+          }
+          await debitWallet(user._id, "main", ACTIVATION_FEE, "activation_fee", {}, { session });
+          await creditCompanyWallet(user._id, ACTIVATION_FEE, "activation_fee", {}, { session });
+          await createTokenForOwner(user._id, { generation: 1, pool: 0, session });
+          const contribution = await contributeToActiveToken(user._id, INITIAL_LOTTERY_BONUS, { session });
+          await creditWallet(
+            user._id,
+            "lottery",
+            INITIAL_LOTTERY_BONUS,
+            "activation_bonus",
+            {
+              tokenNumber: contribution.token.tokenNumber,
+              unlockedLevels: contribution.leveledUp
+            },
+            { session }
+          );
+          activation = {
+            token: contribution.token,
+            bonus: {
+              lotteryBalance: INITIAL_LOTTERY_BONUS,
+              unlockedLevels: contribution.leveledUp
+            }
+          };
+        });
+      } finally {
+        await session.endSession();
       }
-      await debitWallet(req.user._id, "main", ACTIVATION_FEE, "activation_fee", {});
-      await creditCompanyWallet(req.user._id, ACTIVATION_FEE, "activation_fee", {});
-      const token = await createTokenForOwner(req.user._id, { generation: 1, pool: 0 });
-      await User.findByIdAndUpdate(req.user._id, { hasActivatedToken: true });
-      res.status(201).json(new ApiResponse(201, { token }, "Token activated successfully"));
+      res.status(201).json(new ApiResponse(201, activation, "Token activated successfully"));
     });
     var companyWallet = asyncHandler(async (_req, res) => {
       const company = await CompanyWallet.getSingleton();
@@ -1655,6 +1709,7 @@ var require_wallet_validator = __commonJS({
       query("type").optional().isIn([
         "topup",
         "activation_fee",
+        "activation_bonus",
         "shopkeeper_registration_fee",
         "tax_debit",
         "admin_credit",

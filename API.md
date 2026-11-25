@@ -325,11 +325,11 @@ the purchase category and cannot be overridden per user.
 
 ### `POST /tokens/activate` 🔒 (shopper only)
 
-One-time action per shopper — pays a flat Rs 100 activation fee (see payment note below) and issues their first token.
+One-time action per shopper — pays a flat Rs 1,000 activation fee from the main wallet, credits Rs 21,000 to the lottery balance, and issues the first token with levels 1–6 unlocked. The bonus unlocks eligibility; it is not a draw payout.
 
 Response `201`:
 ```json
-{ "statusCode": 201, "data": { "token": { "tokenNumber": "574229", "unlockedLevel": 0, "pool": 0, "status": "active", "generation": 1, "...": "..." } }, "message": "Token activated successfully", "success": true }
+{ "statusCode": 201, "data": { "token": { "tokenNumber": "574229", "unlockedLevel": 6, "pool": 0, "status": "active", "generation": 1, "...": "..." }, "bonus": { "lotteryBalance": 21000, "unlockedLevels": [1,2,3,4,5,6] } }, "message": "Token activated successfully", "success": true }
 ```
 Errors: `403` if called by a non-shopper, `400` if this shopper already has a token.
 
@@ -498,7 +498,7 @@ Request body (optional): `{ "reason": "Invalid account number" }`. Marks the req
 
 ## Draws (the lottery engine)
 
-How it works: a draw picks a random 6-digit number and checks it against every token that has **at least level 1 unlocked** (both `active` and `completed` tokens are eligible — a completed token stays eligible forever). Token numbers are globally unique, so at most one token can win any single draw. The reward is that token's **current** unlocked level × 1000 (so a token that's since progressed to level 10 wins 10,000, even if it only had level 5 unlocked when it first became eligible) — a `completed` token always pays the max, 30,000. A token with 0 levels unlocked (freshly activated, no purchases yet) can never win, even on an exact number match.
+How it works: a draw picks a random 6-digit number and checks it against every token that has **at least level 1 unlocked** (both `active` and `completed` tokens are eligible — a completed token stays eligible forever). Token numbers are globally unique, so at most one token can win any single draw. The reward is that token's **current** unlocked level × 1000 (so a token that's since progressed to level 10 wins 10,000, even if it only had level 5 unlocked when it first became eligible) — a `completed` token always pays the max, 30,000. The first token starts at level 6 from the activation bonus; later tokens start at level 0 and cannot win until purchases unlock at least level 1.
 
 A live in-process scheduler now runs draws automatically, one every `DRAW_INTERVAL_SECONDS` (default 62s ≈ 1,400/day), starting as soon as the server boots (`ENABLE_DRAW_SCHEDULER=true`, the default). ⚠️ This is a single-process `setInterval` scheduler — fine for one server instance, but if this API is ever run as multiple replicas behind a load balancer, each replica would run its own scheduler and draws would fire N times too often. At that point, set `ENABLE_DRAW_SCHEDULER=false` on all but one replica, or move this to a dedicated worker process — not done yet.
 
@@ -622,7 +622,7 @@ Hard-deletes the user and their wallet record. `400` if an admin tries to delete
 | GET | `/admin/shops` | Yes (admin) | List shops awaiting or having completed admin review |
 | POST | `/admin/shops/:id/approve` | Yes (admin) | Approve a shop for public listing |
 | POST | `/admin/shops/:id/reject` | Yes (admin) | Reject a shop and optionally record a reason |
-| POST | `/tokens/activate` | Yes (shopper) | Pay Rs 100, get first token |
+| POST | `/tokens/activate` | Yes (shopper) | Pay Rs 1,000, get first token and Rs 21,000 lottery-balance bonus (levels 1–6 unlocked) |
 | GET | `/tokens/me` | Yes | List my tokens |
 | POST | `/purchases` | Yes (shopkeeper) | Record a shop sale, or a dealer-submitted property/car/bike deal |
 | POST | `/purchases/self` | Yes (shopper) | Record my own property/car/bike deal (self-automated, no dealer) |

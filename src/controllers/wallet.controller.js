@@ -5,10 +5,16 @@ const User = require('../models/user.model');
 const CompanyWallet = require('../models/companyWallet.model');
 const WalletTransaction = require('../models/walletTransaction.model');
 const mongoose = require('mongoose');
-const { getOrCreateWallet, debitWallet, creditCompanyWallet } = require('../services/wallet.service');
-const { createTokenForOwner } = require('../services/token.service');
+const {
+  getOrCreateWallet,
+  debitWallet,
+  creditWallet,
+  creditCompanyWallet,
+} = require('../services/wallet.service');
+const { createTokenForOwner, contributeToActiveToken } = require('../services/token.service');
 
-const ACTIVATION_FEE = 100;
+const ACTIVATION_FEE = 1000;
+const INITIAL_LOTTERY_BONUS = 21000;
 
 // GET /api/wallet/me
 const myWallet = asyncHandler(async (req, res) => {
@@ -81,29 +87,65 @@ const buildHistoryFilter = (query, userId, includeCompany) => {
 };
 
 // POST /api/tokens/activate
-// One-time Rs 100 payment that issues a shopper's first token.
+// One-time Rs 1,000 payment that issues a shopper's first token and unlocks its first six levels.
 const activate = asyncHandler(async (req, res) => {
   if (req.user.role !== 'shopper') {
     throw new ApiError(403, 'Only shopper accounts can activate a token');
   }
 
   if (req.user.hasActivatedToken) {
-    throw new ApiError(400, 'Your account already has an active token');
+    throw new ApiError(400, 'Your account has already activated its first token');
   }
 
-  const wallet = await getOrCreateWallet(req.user._id);
-  if (wallet.mainBalance < ACTIVATION_FEE) {
-    throw new ApiError(400, 'Insufficient main wallet balance for the Rs 100 activation fee');
+  const session = await mongoose.startSession();
+  let activation;
+
+  try {
+    await session.withTransaction(async () => {
+      const user = await User.findOneAndUpdate(
+        { _id: req.user._id, role: 'shopper', hasActivatedToken: { $ne: true } },
+        { $set: { hasActivatedToken: true } },
+        { new: true, session }
+      );
+      if (!user) {
+        throw new ApiError(400, 'Your account has already activated its first token');
+      }
+
+      const wallet = await getOrCreateWallet(user._id, { session });
+      if (wallet.mainBalance < ACTIVATION_FEE) {
+        throw new ApiError(400, 'Insufficient main wallet balance for the Rs 1,000 activation fee');
+      }
+
+      await debitWallet(user._id, 'main', ACTIVATION_FEE, 'activation_fee', {}, { session });
+      await creditCompanyWallet(user._id, ACTIVATION_FEE, 'activation_fee', {}, { session });
+
+      await createTokenForOwner(user._id, { generation: 1, pool: 0, session });
+      const contribution = await contributeToActiveToken(user._id, INITIAL_LOTTERY_BONUS, { session });
+      await creditWallet(
+        user._id,
+        'lottery',
+        INITIAL_LOTTERY_BONUS,
+        'activation_bonus',
+        {
+          tokenNumber: contribution.token.tokenNumber,
+          unlockedLevels: contribution.leveledUp,
+        },
+        { session }
+      );
+
+      activation = {
+        token: contribution.token,
+        bonus: {
+          lotteryBalance: INITIAL_LOTTERY_BONUS,
+          unlockedLevels: contribution.leveledUp,
+        },
+      };
+    });
+  } finally {
+    await session.endSession();
   }
 
-  await debitWallet(req.user._id, 'main', ACTIVATION_FEE, 'activation_fee', {});
-  await creditCompanyWallet(req.user._id, ACTIVATION_FEE, 'activation_fee', {});
-
-  const token = await createTokenForOwner(req.user._id, { generation: 1, pool: 0 });
-
-  await User.findByIdAndUpdate(req.user._id, { hasActivatedToken: true });
-
-  res.status(201).json(new ApiResponse(201, { token }, 'Token activated successfully'));
+  res.status(201).json(new ApiResponse(201, activation, 'Token activated successfully'));
 });
 
 // GET /api/wallet/company (admin only)

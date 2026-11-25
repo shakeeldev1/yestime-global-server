@@ -35,6 +35,7 @@ const walletHistoryValidator = [
     .isIn([
       'topup',
       'activation_fee',
+      'activation_bonus',
       'shopkeeper_registration_fee',
       'tax_debit',
       'admin_credit',
