@@ -2913,6 +2913,11 @@ var require_shopAdmin_controller = __commonJS({
         )
       );
     });
+    var getShop = asyncHandler(async (req, res) => {
+      const shop = await Shop.findById(req.params.id).populate({ path: "owner", select: "name email role" }).populate({ path: "reviewedBy", select: "name email" });
+      if (!shop) throw new ApiError(404, "Shop not found");
+      res.status(200).json(new ApiResponse(200, { shop }, "Shop fetched successfully"));
+    });
     var findPendingShop = async (id) => {
       const shop = await Shop.findById(id).populate({ path: "owner", select: "name email role" });
       if (!shop) throw new ApiError(404, "Shop not found");
@@ -2951,7 +2956,7 @@ var require_shopAdmin_controller = __commonJS({
       }).catch((error) => console.error("Failed to send shop rejection email:", error.message));
       res.status(200).json(new ApiResponse(200, { shop }, "Shop rejected successfully"));
     });
-    module2.exports = { listShops, approveShop, rejectShop };
+    module2.exports = { listShops, getShop, approveShop, rejectShop };
   }
 });
 
@@ -3008,7 +3013,7 @@ var require_admin_routes = __commonJS({
       approvePayment,
       rejectPayment
     } = require_payment_controller();
-    var { listShops, approveShop, rejectShop } = require_shopAdmin_controller();
+    var { listShops, getShop, approveShop, rejectShop } = require_shopAdmin_controller();
     var {
       listUsersValidator,
       createUserValidator,
@@ -3034,6 +3039,7 @@ var require_admin_routes = __commonJS({
     router.post("/payments/:id/approve", approvePayment);
     router.post("/payments/:id/reject", rejectPaymentValidator, validate, rejectPayment);
     router.get("/shops", listShops);
+    router.get("/shops/:id", getShop);
     router.post("/shops/:id/approve", approveShop);
     router.post(
       "/shops/:id/reject",

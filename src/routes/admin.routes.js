@@ -15,7 +15,7 @@ const {
   approvePayment,
   rejectPayment,
 } = require('../controllers/payment.controller');
-const { listShops, approveShop, rejectShop } = require('../controllers/shopAdmin.controller');
+const { listShops, getShop, approveShop, rejectShop } = require('../controllers/shopAdmin.controller');
 const {
   listUsersValidator,
   createUserValidator,
@@ -45,6 +45,7 @@ router.get('/payments', listPayments);
 router.post('/payments/:id/approve', approvePayment);
 router.post('/payments/:id/reject', rejectPaymentValidator, validate, rejectPayment);
 router.get('/shops', listShops);
+router.get('/shops/:id', getShop);
 router.post('/shops/:id/approve', approveShop);
 router.post(
   '/shops/:id/reject',

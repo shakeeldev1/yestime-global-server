@@ -44,6 +44,15 @@ const listShops = asyncHandler(async (req, res) => {
   );
 });
 
+const getShop = asyncHandler(async (req, res) => {
+  const shop = await Shop.findById(req.params.id)
+    .populate({ path: 'owner', select: 'name email role' })
+    .populate({ path: 'reviewedBy', select: 'name email' });
+  if (!shop) throw new ApiError(404, 'Shop not found');
+
+  res.status(200).json(new ApiResponse(200, { shop }, 'Shop fetched successfully'));
+});
+
 const findPendingShop = async (id) => {
   const shop = await Shop.findById(id).populate({ path: 'owner', select: 'name email role' });
   if (!shop) throw new ApiError(404, 'Shop not found');
@@ -89,4 +98,4 @@ const rejectShop = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { shop }, 'Shop rejected successfully'));
 });
 
-module.exports = { listShops, approveShop, rejectShop };
+module.exports = { listShops, getShop, approveShop, rejectShop };
