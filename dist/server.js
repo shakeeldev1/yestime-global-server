@@ -492,17 +492,20 @@ var require_mailer = __commonJS({
       host: env2.SMTP_HOST,
       port: env2.SMTP_PORT,
       secure: env2.SMTP_SECURE,
+      requireTLS: !env2.SMTP_SECURE,
+      tls: { minVersion: "TLSv1.2" },
       auth: {
         user: env2.SMTP_USER,
         pass: env2.SMTP_PASS
       }
     });
-    var sendMail = async ({ to, subject, html }) => {
+    var sendMail = async ({ to, subject, html, text }) => {
       await transporter.sendMail({
         from: env2.MAIL_FROM,
         to,
         subject,
-        html
+        html,
+        text
       });
     };
     var escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
@@ -529,7 +532,15 @@ var require_mailer = __commonJS({
       await sendMail({
         to,
         subject,
-        html: otpEmailTemplate({ name, otp, purposeText, actionUrl, footerText })
+        html: otpEmailTemplate({ name, otp, purposeText, actionUrl, footerText }),
+        text: [
+          `Hi ${name},`,
+          purposeText,
+          `Your one-time code is ${otp}.`,
+          actionUrl ? `Set your password: ${actionUrl}` : null,
+          `This code expires in ${env2.OTP_EXPIRES_IN_MINUTES} minutes.`,
+          footerText
+        ].filter(Boolean).join("\n\n")
       });
     };
     var notifyAdmin = async ({ subject, html }) => {

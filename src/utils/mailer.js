@@ -5,18 +5,21 @@ const transporter = nodemailer.createTransport({
   host: env.SMTP_HOST,
   port: env.SMTP_PORT,
   secure: env.SMTP_SECURE,
+  requireTLS: !env.SMTP_SECURE,
+  tls: { minVersion: 'TLSv1.2' },
   auth: {
     user: env.SMTP_USER,
     pass: env.SMTP_PASS,
   },
 });
 
-const sendMail = async ({ to, subject, html }) => {
+const sendMail = async ({ to, subject, html, text }) => {
   await transporter.sendMail({
     from: env.MAIL_FROM,
     to,
     subject,
     html,
+    text,
   });
 };
 
@@ -61,6 +64,14 @@ const sendOtpEmail = async ({ to, name, otp, purpose, isStaffInvite = false }) =
     to,
     subject,
     html: otpEmailTemplate({ name, otp, purposeText, actionUrl, footerText }),
+    text: [
+      `Hi ${name},`,
+      purposeText,
+      `Your one-time code is ${otp}.`,
+      actionUrl ? `Set your password: ${actionUrl}` : null,
+      `This code expires in ${env.OTP_EXPIRES_IN_MINUTES} minutes.`,
+      footerText,
+    ].filter(Boolean).join('\n\n'),
   });
 };
 
