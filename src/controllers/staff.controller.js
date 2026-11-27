@@ -2,7 +2,6 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const User = require('../models/user.model');
-const Shop = require('../models/shop.model');
 const ReferralReward = require('../models/referralReward.model');
 const StaffWallet = require('../models/staffWallet.model');
 const StaffPayoutRequest = require('../models/staffPayoutRequest.model');
@@ -22,7 +21,10 @@ const getDashboard = asyncHandler(async (req, res) => {
   const staffId = req.user._id;
   const [wallet, referralCount, rewardTotals, pendingPayouts, settings] = await Promise.all([
     StaffWallet.findOne({ staff: staffId }).lean(),
-    User.countDocuments({ referredByStaff: staffId }),
+    User.countDocuments({
+      referredByStaff: staffId,
+      $or: [{ role: 'shopper' }, { role: 'shopkeeper', hasActivatedToken: true }],
+    }),
     ReferralReward.aggregate([
       { $match: { staff: staffId } },
       {
@@ -53,9 +55,11 @@ const getDashboard = asyncHandler(async (req, res) => {
           email: req.user.email,
           phoneNumber: req.user.phoneNumber,
           referralCode: req.user.staffReferralCode,
-          commissionRules: req.user.usesGlobalCommissionRules
-            ? settings.defaultRules
-            : req.user.staffCommissionRules,
+          commissionRules: {
+            shopper: (req.user.usesGlobalCommissionRules
+              ? settings.defaultRules
+              : req.user.staffCommissionRules).shopper,
+          },
           usesGlobalCommissionRules: req.user.usesGlobalCommissionRules,
         },
         summary: {
@@ -77,19 +81,21 @@ const getDashboard = asyncHandler(async (req, res) => {
 
 const listReferrals = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
-  const filter = { referredByStaff: req.user._id };
-  if (req.query.role === 'shopper' || req.query.role === 'shopkeeper') filter.role = req.query.role;
+  const filter = {
+    referredByStaff: req.user._id,
+    $or: [{ role: 'shopper' }, { role: 'shopkeeper', hasActivatedToken: true }],
+  };
   if (req.query.isVerified === 'true' || req.query.isVerified === 'false') {
     filter.isVerified = req.query.isVerified === 'true';
   }
   const searchTerm = String(req.query.search || '').trim();
   if (searchTerm) {
     const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
-    filter.$or = [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }];
+    filter.$and = [{ $or: [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }] }];
   }
   const [members, total] = await Promise.all([
     User.find(filter)
-      .select('name email role phoneNumber isVerified hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt')
+      .select('name email phoneNumber isVerified hasActivatedToken createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
@@ -97,19 +103,9 @@ const listReferrals = asyncHandler(async (req, res) => {
     User.countDocuments(filter),
   ]);
   const memberIds = members.map((member) => member._id);
-  const [shops, rewards] = await Promise.all([
-    Shop.find({ owner: { $in: memberIds } }).select('owner shopName approvalStatus registrationFee createdAt').lean(),
-    ReferralReward.find({ staff: req.user._id, member: { $in: memberIds } })
-      .select('member memberType trigger baseAmount commissionType commissionRate commissionAmount createdAt')
-      .lean(),
-  ]);
-  const shopsByOwner = new Map();
-  for (const shop of shops) {
-    const ownerId = String(shop.owner);
-    const ownerShops = shopsByOwner.get(ownerId) || [];
-    ownerShops.push(shop);
-    shopsByOwner.set(ownerId, ownerShops);
-  }
+  const rewards = await ReferralReward.find({ staff: req.user._id, member: { $in: memberIds } })
+    .select('member trigger commissionAmount createdAt')
+    .lean();
   const rewardsByMember = new Map();
   for (const reward of rewards) {
     const memberId = String(reward.member);
@@ -124,7 +120,6 @@ const listReferrals = asyncHandler(async (req, res) => {
       {
         referrals: members.map((member) => ({
           ...member,
-          shops: shopsByOwner.get(String(member._id)) || [],
           rewards: rewardsByMember.get(String(member._id)) || [],
         })),
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },

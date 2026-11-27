@@ -2,14 +2,13 @@
 
 ## Referral attribution and earning rules
 
-Staff accounts are created by an administrator. The API generates a unique referral code for each staff member. A new shopper or shopkeeper includes that code as `referralCode` in `POST /api/auth/signup`. Invalid or blocked staff codes are rejected; referral attribution cannot be changed by the registering member afterward.
+Staff accounts are created by an administrator. The API generates a unique referral code for each staff member. Users include that code as `referralCode` in `POST /api/auth/signup`. Invalid or blocked staff codes are rejected; referral attribution cannot be changed by the registering user afterward.
 
-Commission is awarded once per referred member and qualifying member type, after the qualifying fee is successfully received:
+Commission is awarded for a referred user's qualifying activation after the activation fee is successfully received:
 
 - Shopper: PKR 1,000 token activation fee.
-- Shopkeeper: PKR 3,000 shop registration fee.
 
-The admin can configure a fixed PKR reward or a percentage of the qualifying fee, separately for shoppers and shopkeepers. Global rules apply to staff assigned to global rules; custom staff rules override them. The selected rule and fee are snapshotted for each award, so later setting changes do not alter past earnings. The fee payment and commission award are committed in the same MongoDB transaction.
+Shop registration now requires at least PKR 3,000 in the user's main wallet but does not collect a fee. Therefore, shop registration does not generate referral commissions. Historical rewards and payout balances remain unchanged. Global rules apply to staff assigned to global rules; custom staff rules override them. The selected rule and fee are snapshotted for each award, so later setting changes do not alter past earnings. Token activation and its referral commission are committed in the same MongoDB transaction.
 
 ## Staff dashboard endpoints
 
@@ -18,8 +17,8 @@ All staff routes require an access token for a user with the `staff` role.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/staff/dashboard` | Staff identity, referral code, commission rules, balances, revenue and referral totals |
-| `GET` | `/api/staff/referrals?page=1&limit=20&search=&role=&isVerified=` | Paginated referred-member profiles, shops and rewards with search and filters |
-| `GET` | `/api/staff/earnings?page=1&limit=20&search=&memberType=&trigger=` | Paginated commission history with search and event filters |
+| `GET` | `/api/staff/referrals?page=1&limit=20&search=&isVerified=` | Paginated referred-user profiles and reward history with search and verification filters |
+| `GET` | `/api/staff/earnings?page=1&limit=20&search=&trigger=` | Paginated commission history with search and reward filters |
 | `GET` | `/api/staff/payouts?page=1&limit=20&status=&search=` | Paginated payment request history with search and status filter |
 | `POST` | `/api/staff/payouts` | Request payment from the available commission balance |
 

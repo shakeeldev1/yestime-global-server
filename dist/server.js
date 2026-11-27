@@ -4680,13 +4680,12 @@ var require_shopkeeper_controller = __commonJS({
     var Shop = require_shop_model();
     var ShopDeletionRequest = require_shopDeletionRequest_model();
     var User = require_user_model();
-    var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
+    var { getOrCreateWallet } = require_wallet_service();
     var { uploadImageBuffer } = require_cloudinary();
     var { notifyAdmin, notifyUser } = require_mailer();
     var { getCompanyRate } = require_commission();
     var mongoose = require("mongoose");
-    var { awardReferralCommission } = require_referral_service();
-    var SHOPKEEPER_REGISTRATION_FEE = 3e3;
+    var MIN_SHOPKEEPER_WALLET_BALANCE = 3e3;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
       if (category === "property") return "property";
@@ -4808,24 +4807,9 @@ var require_shopkeeper_controller = __commonJS({
         await session.withTransaction(async () => {
           const isFirstShop = !await Shop.exists({ owner: user._id }).session(session);
           const wallet = await getOrCreateWallet(user._id, { session });
-          if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-            throw new ApiError(400, "Insufficient main wallet balance for the Rs 3000 shop registration fee");
+          if (wallet.mainBalance < MIN_SHOPKEEPER_WALLET_BALANCE) {
+            throw new ApiError(400, "Your main wallet balance must be PKR 3,000 or more to register a shop.");
           }
-          await debitWallet(
-            user._id,
-            "main",
-            SHOPKEEPER_REGISTRATION_FEE,
-            "shopkeeper_registration_fee",
-            { shopName, categories },
-            { session }
-          );
-          await creditCompanyWallet(
-            user._id,
-            SHOPKEEPER_REGISTRATION_FEE,
-            "shopkeeper_registration_fee",
-            { shopName, categories },
-            { session }
-          );
           [shop] = await Shop.create(
             [{
               owner: user._id,
@@ -4839,7 +4823,7 @@ var require_shopkeeper_controller = __commonJS({
               commissionRate,
               city,
               location: { type: "Point", coordinates: [lng, lat] },
-              registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+              registrationFee: 0,
               approvalStatus: "pending",
               isVerified: false
             }],
@@ -4855,19 +4839,10 @@ var require_shopkeeper_controller = __commonJS({
             user.businessImage = imageUrl;
             user.businessCategories = [...new Set(categories)];
             user.taxRate = commissionRate;
-            user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+            user.shopkeeperRegistrationFee = 0;
             user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
             await user.save({ session });
           }
-          await awardReferralCommission(
-            {
-              memberId: user._id,
-              memberType: "shopkeeper",
-              trigger: "shop_registration",
-              baseAmount: SHOPKEEPER_REGISTRATION_FEE
-            },
-            { session }
-          );
         });
       } finally {
         await session.endSession();
@@ -4884,7 +4859,11 @@ var require_shopkeeper_controller = __commonJS({
         })
       ]).catch((error) => console.error("Failed to notify shop registration parties:", error.message));
       res.status(201).json(
-        new ApiResponse(201, { shop, registrationFee: SHOPKEEPER_REGISTRATION_FEE }, "Shop registered successfully")
+        new ApiResponse(
+          201,
+          { shop, registrationFee: 0, minimumWalletBalance: MIN_SHOPKEEPER_WALLET_BALANCE },
+          "Shop registered successfully"
+        )
       );
     });
     var updateShop = asyncHandler(async (req, res) => {
@@ -4992,7 +4971,6 @@ var require_staff_controller = __commonJS({
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
     var User = require_user_model();
-    var Shop = require_shop_model();
     var ReferralReward = require_referralReward_model();
     var StaffWallet = require_staffWallet_model();
     var StaffPayoutRequest = require_staffPayoutRequest_model();
@@ -5009,7 +4987,10 @@ var require_staff_controller = __commonJS({
       const staffId = req.user._id;
       const [wallet, referralCount, rewardTotals, pendingPayouts, settings] = await Promise.all([
         StaffWallet.findOne({ staff: staffId }).lean(),
-        User.countDocuments({ referredByStaff: staffId }),
+        User.countDocuments({
+          referredByStaff: staffId,
+          $or: [{ role: "shopper" }, { role: "shopkeeper", hasActivatedToken: true }]
+        }),
         ReferralReward.aggregate([
           { $match: { staff: staffId } },
           {
@@ -5039,7 +5020,9 @@ var require_staff_controller = __commonJS({
               email: req.user.email,
               phoneNumber: req.user.phoneNumber,
               referralCode: req.user.staffReferralCode,
-              commissionRules: req.user.usesGlobalCommissionRules ? settings.defaultRules : req.user.staffCommissionRules,
+              commissionRules: {
+                shopper: (req.user.usesGlobalCommissionRules ? settings.defaultRules : req.user.staffCommissionRules).shopper
+              },
               usesGlobalCommissionRules: req.user.usesGlobalCommissionRules
             },
             summary: {
@@ -5060,32 +5043,24 @@ var require_staff_controller = __commonJS({
     });
     var listReferrals = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
-      const filter = { referredByStaff: req.user._id };
-      if (req.query.role === "shopper" || req.query.role === "shopkeeper") filter.role = req.query.role;
+      const filter = {
+        referredByStaff: req.user._id,
+        $or: [{ role: "shopper" }, { role: "shopkeeper", hasActivatedToken: true }]
+      };
       if (req.query.isVerified === "true" || req.query.isVerified === "false") {
         filter.isVerified = req.query.isVerified === "true";
       }
       const searchTerm = String(req.query.search || "").trim();
       if (searchTerm) {
         const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
-        filter.$or = [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }];
+        filter.$and = [{ $or: [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }] }];
       }
       const [members, total] = await Promise.all([
-        User.find(filter).select("name email role phoneNumber isVerified hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        User.find(filter).select("name email phoneNumber isVerified hasActivatedToken createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         User.countDocuments(filter)
       ]);
       const memberIds = members.map((member) => member._id);
-      const [shops, rewards] = await Promise.all([
-        Shop.find({ owner: { $in: memberIds } }).select("owner shopName approvalStatus registrationFee createdAt").lean(),
-        ReferralReward.find({ staff: req.user._id, member: { $in: memberIds } }).select("member memberType trigger baseAmount commissionType commissionRate commissionAmount createdAt").lean()
-      ]);
-      const shopsByOwner = /* @__PURE__ */ new Map();
-      for (const shop of shops) {
-        const ownerId = String(shop.owner);
-        const ownerShops = shopsByOwner.get(ownerId) || [];
-        ownerShops.push(shop);
-        shopsByOwner.set(ownerId, ownerShops);
-      }
+      const rewards = await ReferralReward.find({ staff: req.user._id, member: { $in: memberIds } }).select("member trigger commissionAmount createdAt").lean();
       const rewardsByMember = /* @__PURE__ */ new Map();
       for (const reward of rewards) {
         const memberId = String(reward.member);
@@ -5099,7 +5074,6 @@ var require_staff_controller = __commonJS({
           {
             referrals: members.map((member) => ({
               ...member,
-              shops: shopsByOwner.get(String(member._id)) || [],
               rewards: rewardsByMember.get(String(member._id)) || []
             })),
             pagination: { page, limit, total, pages: Math.ceil(total / limit) }

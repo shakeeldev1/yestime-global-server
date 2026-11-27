@@ -2,7 +2,7 @@
 
 This document covers the endpoints that changed or were added in this update:
 
-1. Shops are no longer one-per-user — a user can register **multiple shops**, each with its own location, for the same flat **Rs 3000** fee.
+1. Shops are no longer one-per-user — a user can register **multiple shops**, each with its own location. Every registration requires at least **Rs 3000** in the main wallet, but the balance is not charged.
 2. Shop directory search now supports **location-based filtering** (by city, or by "near me" coordinates).
 3. Token activation (`POST /api/tokens/activate`) **debits Rs 1,000 from the user's main wallet** and grants a one-time Rs 21,000 lottery-balance bonus, unlocking the first six levels of the first token.
 
@@ -58,7 +58,7 @@ shopping | wholesale | petrol_diesel | motorcycle_scooty | car | property | crop
 
 ## 2. Register a shop
 
-Registers a new shop for the logged-in user. Can be called repeatedly to add more shops — there is **no limit** on shop count per user, and **every call charges Rs 3000** from the user's main wallet.
+Registers a new shop for the logged-in user. Can be called repeatedly to add more shops — there is **no limit** on shop count per user. Each registration checks that the main wallet has at least Rs 3000; it does not debit the wallet or credit the company wallet.
 
 ```
 POST /api/shopkeepers/register
@@ -128,13 +128,14 @@ Attach the optional `image` file field. Do not send an image URL.
       "businessCategories": ["shopping", "wholesale"],
       "city": "Lahore",
       "location": { "type": "Point", "coordinates": [74.3587, 31.5204] },
-      "registrationFee": 3000,
+      "registrationFee": 0,
       "isVerified": true,
       "isBlocked": false,
       "createdAt": "2026-09-19T10:00:00.000Z",
       "updatedAt": "2026-09-19T10:00:00.000Z"
     },
-    "registrationFee": 3000
+    "registrationFee": 0,
+    "minimumWalletBalance": 3000
   },
   "message": "Shop registered successfully",
   "success": true
@@ -148,7 +149,7 @@ Attach the optional `image` file field. Do not send an image URL.
 | Status | Cause |
 |---|---|
 | `400` | `"Only shopper or shopkeeper accounts can register a shop"` — e.g. an admin account |
-| `400` | `"Insufficient main wallet balance for the Rs 3000 shop registration fee"` |
+| `400` | `"Your main wallet balance must be PKR 3,000 or more to register a shop."` |
 | `422` | Validation failed (see envelope above) — missing/invalid `city`/`lat`/`lng`/etc. |
 | `401` | Missing/invalid/expired access token |
 
@@ -304,7 +305,7 @@ Same field names/limits as registration (section 2), minus `categories` also bei
 
 ## 6. Request shop deletion
 
-Owner-only. This submits a deletion request for admin review; it does not immediately remove the shop. The Rs 3000 registration fee is not refunded if the request is approved.
+Owner-only. This submits a deletion request for admin review; it does not immediately remove the shop. Any registration fee paid under the previous policy is not refunded if the request is approved.
 
 ```
 POST /api/shopkeepers/delete
@@ -472,4 +473,4 @@ Authorization: Bearer <accessToken>
   "success": true
 }
 ```
-`mainBalance` is what both the Rs 3,000 shop registration fee and the Rs 1,000 activation fee are debited from. The first activation also adds Rs 21,000 to `lotteryBalance`; later token generations receive no activation bonus.
+Shop registration requires `mainBalance` to be at least Rs 3,000 but does not debit it. The Rs 1,000 token activation fee is still debited from `mainBalance`. The first activation also adds Rs 21,000 to `lotteryBalance`; later token generations receive no activation bonus.

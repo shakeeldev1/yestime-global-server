@@ -4,14 +4,13 @@ const ApiResponse = require('../utils/ApiResponse');
 const Shop = require('../models/shop.model');
 const ShopDeletionRequest = require('../models/shopDeletionRequest.model');
 const User = require('../models/user.model');
-const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../services/wallet.service');
+const { getOrCreateWallet } = require('../services/wallet.service');
 const { uploadImageBuffer } = require('../lib/cloudinary');
 const { notifyAdmin, notifyUser } = require('../utils/mailer');
 const { getCompanyRate } = require('../utils/commission');
 const mongoose = require('mongoose');
-const { awardReferralCommission } = require('../services/referral.service');
 
-const SHOPKEEPER_REGISTRATION_FEE = 3000;
+const MIN_SHOPKEEPER_WALLET_BALANCE = 3000;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
 
 const getBusinessType = (category) => {
@@ -142,8 +141,7 @@ const myShops = asyncHandler(async (req, res) => {
 });
 
 // POST /api/shopkeepers/register
-// A user can register any number of shops; each one costs the flat
-// Rs 3000 registration fee, debited from their main wallet.
+// Each shop registration requires Rs 3000 in the main wallet but does not debit it.
 const registerShopkeeper = asyncHandler(async (req, res) => {
   const user = req.user;
 
@@ -169,25 +167,9 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     await session.withTransaction(async () => {
       const isFirstShop = !(await Shop.exists({ owner: user._id }).session(session));
       const wallet = await getOrCreateWallet(user._id, { session });
-      if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-        throw new ApiError(400, 'Insufficient main wallet balance for the Rs 3000 shop registration fee');
+      if (wallet.mainBalance < MIN_SHOPKEEPER_WALLET_BALANCE) {
+        throw new ApiError(400, 'Your main wallet balance must be PKR 3,000 or more to register a shop.');
       }
-
-      await debitWallet(
-        user._id,
-        'main',
-        SHOPKEEPER_REGISTRATION_FEE,
-        'shopkeeper_registration_fee',
-        { shopName, categories },
-        { session }
-      );
-      await creditCompanyWallet(
-        user._id,
-        SHOPKEEPER_REGISTRATION_FEE,
-        'shopkeeper_registration_fee',
-        { shopName, categories },
-        { session }
-      );
 
       [shop] = await Shop.create(
         [{
@@ -202,7 +184,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
           commissionRate,
           city,
           location: { type: 'Point', coordinates: [lng, lat] },
-          registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+          registrationFee: 0,
           approvalStatus: 'pending',
           isVerified: false,
         }],
@@ -219,20 +201,11 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
         user.businessImage = imageUrl;
         user.businessCategories = [...new Set(categories)];
         user.taxRate = commissionRate;
-        user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+        user.shopkeeperRegistrationFee = 0;
         user.shopkeeperRegisteredAt = new Date();
         await user.save({ session });
       }
 
-      await awardReferralCommission(
-        {
-          memberId: user._id,
-          memberType: 'shopkeeper',
-          trigger: 'shop_registration',
-          baseAmount: SHOPKEEPER_REGISTRATION_FEE,
-        },
-        { session }
-      );
     });
   } finally {
     await session.endSession();
@@ -251,7 +224,11 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
   ]).catch((error) => console.error('Failed to notify shop registration parties:', error.message));
 
   res.status(201).json(
-    new ApiResponse(201, { shop, registrationFee: SHOPKEEPER_REGISTRATION_FEE }, 'Shop registered successfully')
+    new ApiResponse(
+      201,
+      { shop, registrationFee: 0, minimumWalletBalance: MIN_SHOPKEEPER_WALLET_BALANCE },
+      'Shop registered successfully'
+    )
   );
 });
 
