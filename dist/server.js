@@ -273,6 +273,16 @@ var require_user_model = __commonJS({
           enum: ["verify-email", "reset-password", null],
           default: null,
           select: false
+        },
+        passwordSetupTokenHash: {
+          type: String,
+          default: null,
+          select: false
+        },
+        passwordSetupTokenExpiry: {
+          type: Date,
+          default: null,
+          select: false
         }
       },
       { timestamps: true }
@@ -304,6 +314,8 @@ var require_user_model = __commonJS({
       delete obj.otpHash;
       delete obj.otpExpiry;
       delete obj.otpPurpose;
+      delete obj.passwordSetupTokenHash;
+      delete obj.passwordSetupTokenExpiry;
       delete obj.__v;
       return obj;
     };
@@ -528,11 +540,36 @@ var require_mailer = __commonJS({
     <p>This code expires in ${env2.OTP_EXPIRES_IN_MINUTES} minutes. ${footerText}</p>
   </div>
 `;
-    var sendOtpEmail = async ({ to, name, otp, purpose, isStaffInvite = false }) => {
-      const purposeText = isStaffInvite ? "An administrator created a staff account for you. Use the code below to set your password." : purpose === "reset-password" ? "Use the code below to reset your password." : "Use the code below to verify your email address.";
-      const subject = isStaffInvite ? "Set up your Yes Time Global staff account" : purpose === "reset-password" ? "Your password reset code" : "Verify your email address";
+    var sendStaffInviteEmail = async ({ to, name, token }) => {
+      const actionUrl = `${env2.CLIENT_URL.replace(/\/+$/, "")}/set-password#token=${encodeURIComponent(token)}`;
+      const purposeText = "An administrator created a staff account for you. Use the button below to choose your password.";
+      const footerText = "This secure link expires in 24 hours and can be used once. If you were not expecting a staff account, contact your administrator.";
+      await sendMail({
+        to,
+        subject: "Set up your Yes Time Global staff account",
+        html: `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
+        <h2>Hi ${escapeHtml(name)},</h2>
+        <p>${purposeText}</p>
+        <p style="margin: 28px 0;">
+          <a href="${escapeHtml(actionUrl)}" style="display: inline-block; padding: 12px 22px; border-radius: 8px; background: #0b2947; color: #ffffff; font-weight: bold; text-decoration: none;">Set your password</a>
+        </p>
+        <p>${footerText}</p>
+      </div>
+    `,
+        text: [
+          `Hi ${name},`,
+          purposeText,
+          `Set your password: ${actionUrl}`,
+          footerText
+        ].join("\n\n")
+      });
+    };
+    var sendOtpEmail = async ({ to, name, otp, purpose }) => {
+      const purposeText = purpose === "reset-password" ? "Use the code below to reset your password." : "Use the code below to verify your email address.";
+      const subject = purpose === "reset-password" ? "Your password reset code" : "Verify your email address";
       const actionUrl = purpose === "reset-password" ? `${env2.CLIENT_URL.replace(/\/+$/, "")}/set-password` : null;
-      const footerText = isStaffInvite ? "If you were not expecting a staff account, contact your administrator." : "If you did not request this, you can safely ignore this email.";
+      const footerText = "If you did not request this, you can safely ignore this email.";
       await sendMail({
         to,
         subject,
@@ -553,13 +590,14 @@ var require_mailer = __commonJS({
     var notifyUser = async ({ to, subject, html }) => {
       await sendMail({ to, subject, html });
     };
-    module2.exports = { sendMail, sendOtpEmail, notifyAdmin, notifyUser };
+    module2.exports = { sendMail, sendOtpEmail, sendStaffInviteEmail, notifyAdmin, notifyUser };
   }
 });
 
 // src/controllers/auth.controller.js
 var require_auth_controller = __commonJS({
   "src/controllers/auth.controller.js"(exports2, module2) {
+    var crypto = require("crypto");
     var ms = require_ms();
     var asyncHandler = require_asyncHandler();
     var ApiError = require_ApiError();
@@ -781,10 +819,32 @@ var require_auth_controller = __commonJS({
       }
       user.password = newPassword;
       user.clearOtp();
+      user.passwordSetupTokenHash = null;
+      user.passwordSetupTokenExpiry = null;
       if (user.role === "staff") user.passwordSetupRequired = false;
       await user.setRefreshToken(null);
       await user.save();
       res.status(200).json(new ApiResponse(200, null, "Password reset successfully, please log in"));
+    });
+    var setPasswordWithToken = asyncHandler(async (req, res) => {
+      const { token, newPassword } = req.body;
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const user = await User.findOne({
+        passwordSetupTokenHash: tokenHash,
+        role: "staff",
+        passwordSetupRequired: true
+      }).select("+passwordSetupTokenHash +passwordSetupTokenExpiry");
+      if (!user || !user.passwordSetupTokenExpiry || user.passwordSetupTokenExpiry < /* @__PURE__ */ new Date()) {
+        throw new ApiError(400, "This password setup link is invalid or has expired. Ask your administrator to send a new one.");
+      }
+      user.password = newPassword;
+      user.passwordSetupRequired = false;
+      user.passwordSetupTokenHash = null;
+      user.passwordSetupTokenExpiry = null;
+      user.clearOtp();
+      await user.setRefreshToken(null);
+      await user.save();
+      res.status(200).json(new ApiResponse(200, null, "Password set successfully, please log in"));
     });
     module2.exports = {
       signup,
@@ -797,7 +857,8 @@ var require_auth_controller = __commonJS({
       updateProfile,
       changePassword,
       forgotPassword,
-      resetPassword
+      resetPassword,
+      setPasswordWithToken
     };
   }
 });
@@ -898,6 +959,10 @@ var require_auth_validator = __commonJS({
       otpField,
       body("newPassword").isLength({ min: 6 }).withMessage("New password must be at least 6 characters long")
     ];
+    var setPasswordWithTokenValidator = [
+      body("token").trim().isLength({ min: 64, max: 64 }).withMessage("Password setup token is invalid").isHexadecimal().withMessage("Password setup token is invalid"),
+      body("newPassword").isLength({ min: 6 }).withMessage("New password must be at least 6 characters long")
+    ];
     var updateProfileValidator = [
       body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
       body("phoneNumber").optional({ values: "null" }).trim().isLength({ min: 7, max: 20 }).withMessage("phoneNumber must be between 7 and 20 characters"),
@@ -919,6 +984,7 @@ var require_auth_validator = __commonJS({
       resendOtpValidator,
       forgotPasswordValidator,
       resetPasswordValidator,
+      setPasswordWithTokenValidator,
       updateProfileValidator,
       changePasswordValidator
     };
@@ -994,7 +1060,8 @@ var require_auth_routes = __commonJS({
       updateProfile,
       changePassword,
       forgotPassword,
-      resetPassword
+      resetPassword,
+      setPasswordWithToken
     } = require_auth_controller();
     var {
       signupValidator,
@@ -1003,6 +1070,7 @@ var require_auth_routes = __commonJS({
       resendOtpValidator,
       forgotPasswordValidator,
       resetPasswordValidator,
+      setPasswordWithTokenValidator,
       updateProfileValidator,
       changePasswordValidator
     } = require_auth_validator();
@@ -1016,6 +1084,7 @@ var require_auth_routes = __commonJS({
     router.post("/refresh-token", refreshToken);
     router.post("/forgot-password", forgotPasswordValidator, validate, forgotPassword);
     router.post("/reset-password", resetPasswordValidator, validate, resetPassword);
+    router.post("/set-password-with-token", setPasswordWithTokenValidator, validate, setPasswordWithToken);
     router.post("/logout", authenticate, logout);
     router.get("/me", authenticate, myProfile);
     router.patch("/me", authenticate, updateProfileValidator, validate, updateProfile);
@@ -3745,8 +3814,7 @@ var require_adminReferral_controller = __commonJS({
     var StaffLedgerEntry = require_staffLedgerEntry_model();
     var Shop = require_shop_model();
     var { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require_referral_service();
-    var { generateOtp, hashOtp, getOtpExpiry } = require_otp();
-    var { sendOtpEmail } = require_mailer();
+    var { sendStaffInviteEmail } = require_mailer();
     var paginate = (query, prefix = "") => {
       const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query[`${prefix}limit`] || query.limit) || 20, 1), 100);
@@ -3822,8 +3890,9 @@ var require_adminReferral_controller = __commonJS({
         throw new ApiError(409, "An account with this email already exists");
       }
       const settings = await ensureReferralSettings();
-      const setupOtp = generateOtp();
-      const setupOtpHash = await hashOtp(setupOtp);
+      const setupToken = crypto.randomBytes(32).toString("hex");
+      const setupTokenHash = crypto.createHash("sha256").update(setupToken).digest("hex");
+      const setupTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1e3);
       const session = await mongoose.startSession();
       let staff;
       try {
@@ -3837,9 +3906,8 @@ var require_adminReferral_controller = __commonJS({
               role: "staff",
               isVerified: true,
               passwordSetupRequired: true,
-              otpHash: setupOtpHash,
-              otpExpiry: getOtpExpiry(),
-              otpPurpose: "reset-password",
+              passwordSetupTokenHash: setupTokenHash,
+              passwordSetupTokenExpiry: setupTokenExpiry,
               staffReferralCode: await createReferralCode(),
               staffCommissionRules: req.body.commissionRules || settings.defaultRules || DEFAULT_RULES,
               usesGlobalCommissionRules: req.body.commissionRules === void 0
@@ -3852,11 +3920,11 @@ var require_adminReferral_controller = __commonJS({
         await session.endSession();
       }
       try {
-        await sendOtpEmail({ to: staff.email, name: staff.name, otp: setupOtp, purpose: "reset-password", isStaffInvite: true });
+        await sendStaffInviteEmail({ to: staff.email, name: staff.name, token: setupToken });
       } catch {
         throw new ApiError(
           502,
-          "Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password setup page to request a new code."
+          "Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password reset page to request a code."
         );
       }
       res.status(201).json(

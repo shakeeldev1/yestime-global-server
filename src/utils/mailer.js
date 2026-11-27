@@ -41,24 +41,43 @@ const otpEmailTemplate = ({ name, otp, purposeText, actionUrl, footerText }) => 
   </div>
 `;
 
-const sendOtpEmail = async ({ to, name, otp, purpose, isStaffInvite = false }) => {
-  const purposeText = isStaffInvite
-    ? 'An administrator created a staff account for you. Use the code below to set your password.'
-    : purpose === 'reset-password'
-      ? 'Use the code below to reset your password.'
-      : 'Use the code below to verify your email address.';
+const sendStaffInviteEmail = async ({ to, name, token }) => {
+  const actionUrl = `${env.CLIENT_URL.replace(/\/+$/, '')}/set-password#token=${encodeURIComponent(token)}`;
+  const purposeText = 'An administrator created a staff account for you. Use the button below to choose your password.';
+  const footerText = 'This secure link expires in 24 hours and can be used once. If you were not expecting a staff account, contact your administrator.';
 
-  const subject = isStaffInvite
-    ? 'Set up your Yes Time Global staff account'
-    : purpose === 'reset-password'
-      ? 'Your password reset code'
-      : 'Verify your email address';
+  await sendMail({
+    to,
+    subject: 'Set up your Yes Time Global staff account',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
+        <h2>Hi ${escapeHtml(name)},</h2>
+        <p>${purposeText}</p>
+        <p style="margin: 28px 0;">
+          <a href="${escapeHtml(actionUrl)}" style="display: inline-block; padding: 12px 22px; border-radius: 8px; background: #0b2947; color: #ffffff; font-weight: bold; text-decoration: none;">Set your password</a>
+        </p>
+        <p>${footerText}</p>
+      </div>
+    `,
+    text: [
+      `Hi ${name},`,
+      purposeText,
+      `Set your password: ${actionUrl}`,
+      footerText,
+    ].join('\n\n'),
+  });
+};
+
+const sendOtpEmail = async ({ to, name, otp, purpose }) => {
+  const purposeText = purpose === 'reset-password'
+    ? 'Use the code below to reset your password.'
+    : 'Use the code below to verify your email address.';
+
+  const subject = purpose === 'reset-password' ? 'Your password reset code' : 'Verify your email address';
   const actionUrl = purpose === 'reset-password'
     ? `${env.CLIENT_URL.replace(/\/+$/, '')}/set-password`
     : null;
-  const footerText = isStaffInvite
-    ? 'If you were not expecting a staff account, contact your administrator.'
-    : 'If you did not request this, you can safely ignore this email.';
+  const footerText = 'If you did not request this, you can safely ignore this email.';
 
   await sendMail({
     to,
@@ -83,4 +102,4 @@ const notifyUser = async ({ to, subject, html }) => {
   await sendMail({ to, subject, html });
 };
 
-module.exports = { sendMail, sendOtpEmail, notifyAdmin, notifyUser };
+module.exports = { sendMail, sendOtpEmail, sendStaffInviteEmail, notifyAdmin, notifyUser };

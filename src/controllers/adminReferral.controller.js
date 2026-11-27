@@ -11,8 +11,7 @@ const StaffPayoutRequest = require('../models/staffPayoutRequest.model');
 const StaffLedgerEntry = require('../models/staffLedgerEntry.model');
 const Shop = require('../models/shop.model');
 const { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require('../services/referral.service');
-const { generateOtp, hashOtp, getOtpExpiry } = require('../utils/otp');
-const { sendOtpEmail } = require('../utils/mailer');
+const { sendStaffInviteEmail } = require('../utils/mailer');
 
 const paginate = (query, prefix = '') => {
   const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
@@ -102,8 +101,9 @@ const createStaff = asyncHandler(async (req, res) => {
     throw new ApiError(409, 'An account with this email already exists');
   }
   const settings = await ensureReferralSettings();
-  const setupOtp = generateOtp();
-  const setupOtpHash = await hashOtp(setupOtp);
+  const setupToken = crypto.randomBytes(32).toString('hex');
+  const setupTokenHash = crypto.createHash('sha256').update(setupToken).digest('hex');
+  const setupTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const session = await mongoose.startSession();
   let staff;
   try {
@@ -117,9 +117,8 @@ const createStaff = asyncHandler(async (req, res) => {
           role: 'staff',
           isVerified: true,
           passwordSetupRequired: true,
-          otpHash: setupOtpHash,
-          otpExpiry: getOtpExpiry(),
-          otpPurpose: 'reset-password',
+          passwordSetupTokenHash: setupTokenHash,
+          passwordSetupTokenExpiry: setupTokenExpiry,
           staffReferralCode: await createReferralCode(),
           staffCommissionRules: req.body.commissionRules || settings.defaultRules || DEFAULT_RULES,
           usesGlobalCommissionRules: req.body.commissionRules === undefined,
@@ -132,11 +131,11 @@ const createStaff = asyncHandler(async (req, res) => {
     await session.endSession();
   }
   try {
-    await sendOtpEmail({ to: staff.email, name: staff.name, otp: setupOtp, purpose: 'reset-password', isStaffInvite: true });
+    await sendStaffInviteEmail({ to: staff.email, name: staff.name, token: setupToken });
   } catch {
     throw new ApiError(
       502,
-      'Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password setup page to request a new code.'
+      'Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password reset page to request a code.'
     );
   }
   res.status(201).json(

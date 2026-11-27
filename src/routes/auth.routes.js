@@ -11,6 +11,7 @@ const {
   changePassword,
   forgotPassword,
   resetPassword,
+  setPasswordWithToken,
 } = require('../controllers/auth.controller');
 const {
   signupValidator,
@@ -19,6 +20,7 @@ const {
   resendOtpValidator,
   forgotPasswordValidator,
   resetPasswordValidator,
+  setPasswordWithTokenValidator,
   updateProfileValidator,
   changePasswordValidator,
 } = require('../validators/auth.validator');
@@ -36,6 +38,7 @@ router.post('/refresh-token', refreshToken);
 
 router.post('/forgot-password', forgotPasswordValidator, validate, forgotPassword);
 router.post('/reset-password', resetPasswordValidator, validate, resetPassword);
+router.post('/set-password-with-token', setPasswordWithTokenValidator, validate, setPasswordWithToken);
 
 router.post('/logout', authenticate, logout);
 router.get('/me', authenticate, myProfile);

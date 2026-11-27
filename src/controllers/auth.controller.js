@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const ms = require('../utils/ms');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
@@ -298,11 +299,38 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   user.password = newPassword;
   user.clearOtp();
+  user.passwordSetupTokenHash = null;
+  user.passwordSetupTokenExpiry = null;
   if (user.role === 'staff') user.passwordSetupRequired = false;
   await user.setRefreshToken(null); // revoke any existing sessions
   await user.save();
 
   res.status(200).json(new ApiResponse(200, null, 'Password reset successfully, please log in'));
+});
+
+// POST /api/auth/set-password-with-token
+const setPasswordWithToken = asyncHandler(async (req, res) => {
+  const { token, newPassword } = req.body;
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const user = await User.findOne({
+    passwordSetupTokenHash: tokenHash,
+    role: 'staff',
+    passwordSetupRequired: true,
+  }).select('+passwordSetupTokenHash +passwordSetupTokenExpiry');
+
+  if (!user || !user.passwordSetupTokenExpiry || user.passwordSetupTokenExpiry < new Date()) {
+    throw new ApiError(400, 'This password setup link is invalid or has expired. Ask your administrator to send a new one.');
+  }
+
+  user.password = newPassword;
+  user.passwordSetupRequired = false;
+  user.passwordSetupTokenHash = null;
+  user.passwordSetupTokenExpiry = null;
+  user.clearOtp();
+  await user.setRefreshToken(null);
+  await user.save();
+
+  res.status(200).json(new ApiResponse(200, null, 'Password set successfully, please log in'));
 });
 
 module.exports = {
@@ -317,4 +345,5 @@ module.exports = {
   changePassword,
   forgotPassword,
   resetPassword,
+  setPasswordWithToken,
 };

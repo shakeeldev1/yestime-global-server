@@ -153,6 +153,16 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+    passwordSetupTokenHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    passwordSetupTokenExpiry: {
+      type: Date,
+      default: null,
+      select: false,
+    },
   },
   { timestamps: true }
 );
@@ -189,6 +199,8 @@ userSchema.methods.toJSON = function toJSON() {
   delete obj.otpHash;
   delete obj.otpExpiry;
   delete obj.otpPurpose;
+  delete obj.passwordSetupTokenHash;
+  delete obj.passwordSetupTokenExpiry;
   delete obj.__v;
   return obj;
 };

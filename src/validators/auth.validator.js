@@ -53,6 +53,18 @@ const resetPasswordValidator = [
     .withMessage('New password must be at least 6 characters long'),
 ];
 
+const setPasswordWithTokenValidator = [
+  body('token')
+    .trim()
+    .isLength({ min: 64, max: 64 })
+    .withMessage('Password setup token is invalid')
+    .isHexadecimal()
+    .withMessage('Password setup token is invalid'),
+  body('newPassword')
+    .isLength({ min: 6 })
+    .withMessage('New password must be at least 6 characters long'),
+];
+
 const updateProfileValidator = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
   body('phoneNumber')
@@ -83,6 +95,7 @@ module.exports = {
   resendOtpValidator,
   forgotPasswordValidator,
   resetPasswordValidator,
+  setPasswordWithTokenValidator,
   updateProfileValidator,
   changePasswordValidator,
 };
