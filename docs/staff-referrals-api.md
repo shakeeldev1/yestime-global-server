@@ -19,6 +19,7 @@ All staff routes require an access token for a user with the `staff` role.
 |---|---|---|
 | `GET` | `/api/staff/dashboard` | Staff identity, referral code, commission rules, balances, revenue and referral totals |
 | `GET` | `/api/staff/referrals?page=1&limit=20` | Paginated referred-member profiles, shops and rewards |
+| `GET` | `/api/staff/earnings?page=1&limit=20` | Paginated commission history and qualifying revenue totals |
 | `GET` | `/api/staff/payouts?page=1&limit=20` | Paginated payment request history |
 | `POST` | `/api/staff/payouts` | Request payment from the available commission balance |
 

@@ -139,6 +139,52 @@ const listPayouts = asyncHandler(async (req, res) => {
   );
 });
 
+const listEarnings = asyncHandler(async (req, res) => {
+  const { page, limit, skip } = paginate(req.query);
+  const filter = { staff: req.user._id };
+  const [earnings, total, totalsByType] = await Promise.all([
+    ReferralReward.find(filter)
+      .populate({ path: 'member', select: 'name email role' })
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    ReferralReward.countDocuments(filter),
+    ReferralReward.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: '$memberType',
+          referralRevenue: { $sum: '$baseAmount' },
+          commissionEarned: { $sum: '$commissionAmount' },
+          referralCount: { $sum: 1 },
+        },
+      },
+    ]),
+  ]);
+  const summary = totalsByType.reduce(
+    (result, entry) => {
+      result.referralRevenue += entry.referralRevenue;
+      result.commissionEarned += entry.commissionEarned;
+      result.rewardCount += entry.referralCount;
+      result.byMemberType[entry._id] = {
+        referralRevenue: entry.referralRevenue,
+        commissionEarned: entry.commissionEarned,
+        referralCount: entry.referralCount,
+      };
+      return result;
+    },
+    { referralRevenue: 0, commissionEarned: 0, rewardCount: 0, byMemberType: {} }
+  );
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { earnings, summary, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      'Commission history fetched successfully'
+    )
+  );
+});
+
 const requestPayout = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
   const session = await mongoose.startSession();
@@ -186,4 +232,4 @@ const requestPayout = asyncHandler(async (req, res) => {
   res.status(201).json(new ApiResponse(201, { payout }, 'Payment request submitted for admin review'));
 });
 
-module.exports = { getDashboard, listReferrals, listPayouts, requestPayout };
+module.exports = { getDashboard, listReferrals, listEarnings, listPayouts, requestPayout };

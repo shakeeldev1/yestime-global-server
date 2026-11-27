@@ -4637,6 +4637,46 @@ var require_staff_controller = __commonJS({
         )
       );
     });
+    var listEarnings = asyncHandler(async (req, res) => {
+      const { page, limit, skip } = paginate(req.query);
+      const filter = { staff: req.user._id };
+      const [earnings, total, totalsByType] = await Promise.all([
+        ReferralReward.find(filter).populate({ path: "member", select: "name email role" }).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        ReferralReward.countDocuments(filter),
+        ReferralReward.aggregate([
+          { $match: filter },
+          {
+            $group: {
+              _id: "$memberType",
+              referralRevenue: { $sum: "$baseAmount" },
+              commissionEarned: { $sum: "$commissionAmount" },
+              referralCount: { $sum: 1 }
+            }
+          }
+        ])
+      ]);
+      const summary = totalsByType.reduce(
+        (result, entry) => {
+          result.referralRevenue += entry.referralRevenue;
+          result.commissionEarned += entry.commissionEarned;
+          result.rewardCount += entry.referralCount;
+          result.byMemberType[entry._id] = {
+            referralRevenue: entry.referralRevenue,
+            commissionEarned: entry.commissionEarned,
+            referralCount: entry.referralCount
+          };
+          return result;
+        },
+        { referralRevenue: 0, commissionEarned: 0, rewardCount: 0, byMemberType: {} }
+      );
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { earnings, summary, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Commission history fetched successfully"
+        )
+      );
+    });
     var requestPayout = asyncHandler(async (req, res) => {
       const amount = Number(req.body.amount);
       const session = await mongoose.startSession();
@@ -4682,7 +4722,7 @@ var require_staff_controller = __commonJS({
       }
       res.status(201).json(new ApiResponse(201, { payout }, "Payment request submitted for admin review"));
     });
-    module2.exports = { getDashboard, listReferrals, listPayouts, requestPayout };
+    module2.exports = { getDashboard, listReferrals, listEarnings, listPayouts, requestPayout };
   }
 });
 
@@ -4690,7 +4730,7 @@ var require_staff_controller = __commonJS({
 var require_staff_routes = __commonJS({
   "src/routes/staff.routes.js"(exports2, module2) {
     var express = require("express");
-    var { getDashboard, listReferrals, listPayouts, requestPayout } = require_staff_controller();
+    var { getDashboard, listReferrals, listEarnings, listPayouts, requestPayout } = require_staff_controller();
     var { requestPayoutValidator } = require_referral_validator();
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
@@ -4698,6 +4738,7 @@ var require_staff_routes = __commonJS({
     router.use(authenticate, authorize("staff"));
     router.get("/dashboard", getDashboard);
     router.get("/referrals", listReferrals);
+    router.get("/earnings", listEarnings);
     router.get("/payouts", listPayouts);
     router.post("/payouts", requestPayoutValidator, validate, requestPayout);
     module2.exports = router;
