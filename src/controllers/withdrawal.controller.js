@@ -74,6 +74,17 @@ const listWithdrawals = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { withdrawals }, 'Withdrawals fetched successfully'));
 });
 
+const getWithdrawal = asyncHandler(async (req, res) => {
+  const withdrawal = await Withdrawal.findById(req.params.id)
+    .populate({ path: 'user', select: 'name email role' })
+    .populate({ path: 'processedBy', select: 'name email' });
+  if (!withdrawal) {
+    throw new ApiError(404, 'Withdrawal request not found');
+  }
+
+  res.status(200).json(new ApiResponse(200, { withdrawal }, 'Withdrawal request fetched successfully'));
+});
+
 const findPendingWithdrawal = async (id) => {
   const withdrawal = await Withdrawal.findById(id).populate({ path: 'user', select: 'name email' });
   if (!withdrawal) {
@@ -147,6 +158,7 @@ module.exports = {
   requestWithdrawal,
   myWithdrawals,
   listWithdrawals,
+  getWithdrawal,
   completeWithdrawal,
   rejectWithdrawal,
 };

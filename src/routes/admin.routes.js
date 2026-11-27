@@ -12,6 +12,7 @@ const {
 } = require('../controllers/admin.controller');
 const {
   listPayments,
+  getPayment,
   approvePayment,
   rejectPayment,
 } = require('../controllers/payment.controller');
@@ -42,6 +43,7 @@ router.post('/users/:id/unblock', unblockUser);
 router.delete('/users/:id', deleteUser);
 router.post('/users/:id/wallet-credit', creditWalletValidator, validate, creditUserWallet);
 router.get('/payments', listPayments);
+router.get('/payments/:id', getPayment);
 router.post('/payments/:id/approve', approvePayment);
 router.post('/payments/:id/reject', rejectPaymentValidator, validate, rejectPayment);
 router.get('/shops', listShops);

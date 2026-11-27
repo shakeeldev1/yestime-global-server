@@ -1477,6 +1477,11 @@ var require_payment_controller = __commonJS({
       const payments = await ManualPayment.find(filter).sort({ createdAt: -1 }).populate({ path: "user", select: "name email" });
       res.status(200).json(new ApiResponse(200, { payments }, "Payment requests fetched successfully"));
     });
+    var getPayment = asyncHandler(async (req, res) => {
+      const payment = await ManualPayment.findById(req.params.id).populate({ path: "user", select: "name email role" }).populate({ path: "reviewedBy", select: "name email" });
+      if (!payment) throw new ApiError(404, "Payment request not found");
+      res.status(200).json(new ApiResponse(200, { payment }, "Payment request fetched successfully"));
+    });
     var findPendingPayment = async (id) => {
       const payment = await ManualPayment.findById(id).populate({ path: "user", select: "name email" });
       if (!payment) throw new ApiError(404, "Payment request not found");
@@ -1539,6 +1544,7 @@ var require_payment_controller = __commonJS({
       submitPayment,
       myPayments,
       listPayments,
+      getPayment,
       approvePayment,
       rejectPayment
     };
@@ -1656,6 +1662,13 @@ var require_withdrawal_controller = __commonJS({
       const withdrawals = await Withdrawal.find(filter).sort({ createdAt: -1 }).populate({ path: "user", select: "name email" });
       res.status(200).json(new ApiResponse(200, { withdrawals }, "Withdrawals fetched successfully"));
     });
+    var getWithdrawal = asyncHandler(async (req, res) => {
+      const withdrawal = await Withdrawal.findById(req.params.id).populate({ path: "user", select: "name email role" }).populate({ path: "processedBy", select: "name email" });
+      if (!withdrawal) {
+        throw new ApiError(404, "Withdrawal request not found");
+      }
+      res.status(200).json(new ApiResponse(200, { withdrawal }, "Withdrawal request fetched successfully"));
+    });
     var findPendingWithdrawal = async (id) => {
       const withdrawal = await Withdrawal.findById(id).populate({ path: "user", select: "name email" });
       if (!withdrawal) {
@@ -1715,6 +1728,7 @@ var require_withdrawal_controller = __commonJS({
       requestWithdrawal,
       myWithdrawals,
       listWithdrawals,
+      getWithdrawal,
       completeWithdrawal,
       rejectWithdrawal
     };
@@ -1802,6 +1816,7 @@ var require_wallet_routes = __commonJS({
       requestWithdrawal,
       myWithdrawals,
       listWithdrawals,
+      getWithdrawal,
       completeWithdrawal,
       rejectWithdrawal
     } = require_withdrawal_controller();
@@ -1825,6 +1840,7 @@ var require_wallet_routes = __commonJS({
     router.post("/withdraw", authenticate, withdrawValidator, validate, requestWithdrawal);
     router.get("/withdrawals/me", authenticate, myWithdrawals);
     router.get("/withdrawals", authenticate, authorize("admin"), listWithdrawals);
+    router.get("/withdrawals/:id", authenticate, authorize("admin"), getWithdrawal);
     router.post("/withdrawals/:id/complete", authenticate, authorize("admin"), completeWithdrawal);
     router.post(
       "/withdrawals/:id/reject",
@@ -3010,6 +3026,7 @@ var require_admin_routes = __commonJS({
     } = require_admin_controller();
     var {
       listPayments,
+      getPayment,
       approvePayment,
       rejectPayment
     } = require_payment_controller();
@@ -3036,6 +3053,7 @@ var require_admin_routes = __commonJS({
     router.delete("/users/:id", deleteUser);
     router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
     router.get("/payments", listPayments);
+    router.get("/payments/:id", getPayment);
     router.post("/payments/:id/approve", approvePayment);
     router.post("/payments/:id/reject", rejectPaymentValidator, validate, rejectPayment);
     router.get("/shops", listShops);

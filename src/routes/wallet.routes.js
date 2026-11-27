@@ -9,6 +9,7 @@ const {
   requestWithdrawal,
   myWithdrawals,
   listWithdrawals,
+  getWithdrawal,
   completeWithdrawal,
   rejectWithdrawal,
 } = require('../controllers/withdrawal.controller');
@@ -35,6 +36,7 @@ router.get('/company', authenticate, authorize('admin'), companyWallet);
 router.post('/withdraw', authenticate, withdrawValidator, validate, requestWithdrawal);
 router.get('/withdrawals/me', authenticate, myWithdrawals);
 router.get('/withdrawals', authenticate, authorize('admin'), listWithdrawals);
+router.get('/withdrawals/:id', authenticate, authorize('admin'), getWithdrawal);
 router.post('/withdrawals/:id/complete', authenticate, authorize('admin'), completeWithdrawal);
 router.post(
   '/withdrawals/:id/reject',

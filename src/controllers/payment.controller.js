@@ -89,6 +89,15 @@ const listPayments = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { payments }, 'Payment requests fetched successfully'));
 });
 
+const getPayment = asyncHandler(async (req, res) => {
+  const payment = await ManualPayment.findById(req.params.id)
+    .populate({ path: 'user', select: 'name email role' })
+    .populate({ path: 'reviewedBy', select: 'name email' });
+  if (!payment) throw new ApiError(404, 'Payment request not found');
+
+  res.status(200).json(new ApiResponse(200, { payment }, 'Payment request fetched successfully'));
+});
+
 const findPendingPayment = async (id) => {
   const payment = await ManualPayment.findById(id).populate({ path: 'user', select: 'name email' });
   if (!payment) throw new ApiError(404, 'Payment request not found');
@@ -161,6 +170,7 @@ module.exports = {
   submitPayment,
   myPayments,
   listPayments,
+  getPayment,
   approvePayment,
   rejectPayment,
 };
