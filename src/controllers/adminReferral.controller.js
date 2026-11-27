@@ -42,7 +42,7 @@ const listStaff = asyncHandler(async (req, res) => {
 
   const [staffMembers, total] = await Promise.all([
     User.find(filter)
-      .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt')
+      .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
@@ -112,6 +112,7 @@ const createStaff = asyncHandler(async (req, res) => {
           phoneNumber: req.body.phoneNumber || null,
           role: 'staff',
           isVerified: true,
+          passwordSetupRequired: true,
           otpHash: setupOtpHash,
           otpExpiry: getOtpExpiry(),
           otpPurpose: 'reset-password',
@@ -147,6 +148,7 @@ const createStaff = asyncHandler(async (req, res) => {
           staffReferralCode: staff.staffReferralCode,
           staffCommissionRules: staff.staffCommissionRules,
           usesGlobalCommissionRules: staff.usesGlobalCommissionRules,
+          passwordSetupRequired: staff.passwordSetupRequired,
           isVerified: staff.isVerified,
           createdAt: staff.createdAt,
         },
@@ -158,7 +160,7 @@ const createStaff = asyncHandler(async (req, res) => {
 
 const getStaffDetail = asyncHandler(async (req, res) => {
   const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' })
-    .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt updatedAt')
+    .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt updatedAt')
     .lean();
   if (!staff) throw new ApiError(404, 'Staff member not found');
   const referralSettings = await ensureReferralSettings();
@@ -368,6 +370,8 @@ const processStaffPayout = asyncHandler(async (req, res) => {
           type: req.body.action === 'completed' ? 'payout_completed' : 'payout_rejected',
           amount: payout.amount,
           availableBalanceAfter: wallet.availableBalance,
+          reservedBalanceAfter: wallet.reservedBalance,
+          paidBalanceAfter: wallet.paidBalance,
           reference: payout._id,
           meta: { reason: payout.rejectionReason },
         }],

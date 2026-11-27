@@ -254,6 +254,10 @@ var require_user_model = __commonJS({
           type: Boolean,
           default: false
         },
+        passwordSetupRequired: {
+          type: Boolean,
+          default: false
+        },
         otpHash: {
           type: String,
           default: null,
@@ -682,6 +686,9 @@ var require_auth_controller = __commonJS({
       if (user.isBlocked) {
         throw new ApiError(403, "Your account has been blocked");
       }
+      if (user.role === "staff" && user.passwordSetupRequired) {
+        throw new ApiError(403, "Set your password using the password setup link before signing in");
+      }
       const { accessToken, refreshToken: refreshToken2 } = await issueTokens(user);
       setAuthCookies(res, accessToken, refreshToken2);
       res.status(200).json(new ApiResponse(200, { user, accessToken }, "Logged in successfully"));
@@ -774,6 +781,7 @@ var require_auth_controller = __commonJS({
       }
       user.password = newPassword;
       user.clearOtp();
+      if (user.role === "staff") user.passwordSetupRequired = false;
       await user.setRefreshToken(null);
       await user.save();
       res.status(200).json(new ApiResponse(200, null, "Password reset successfully, please log in"));
@@ -1557,6 +1565,18 @@ var require_staffLedgerEntry_model = __commonJS({
           required: true,
           min: 0
         },
+        reservedBalanceAfter: {
+          type: Number,
+          required: true,
+          default: 0,
+          min: 0
+        },
+        paidBalanceAfter: {
+          type: Number,
+          required: true,
+          default: 0,
+          min: 0
+        },
         reference: {
           type: mongoose.Schema.Types.ObjectId,
           default: null
@@ -1636,6 +1656,8 @@ var require_referral_service = __commonJS({
             type: "commission_earned",
             amount: commissionAmount,
             availableBalanceAfter: wallet.availableBalance,
+            reservedBalanceAfter: wallet.reservedBalance,
+            paidBalanceAfter: wallet.paidBalance,
             reference: reward._id,
             meta: {
               member: memberId,
@@ -3741,7 +3763,7 @@ var require_adminReferral_controller = __commonJS({
       }
       if (req.query.isBlocked !== void 0) filter.isBlocked = req.query.isBlocked === "true";
       const [staffMembers, total] = await Promise.all([
-        User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         User.countDocuments(filter)
       ]);
       const settings = await ensureReferralSettings();
@@ -3803,6 +3825,7 @@ var require_adminReferral_controller = __commonJS({
               phoneNumber: req.body.phoneNumber || null,
               role: "staff",
               isVerified: true,
+              passwordSetupRequired: true,
               otpHash: setupOtpHash,
               otpExpiry: getOtpExpiry(),
               otpPurpose: "reset-password",
@@ -3838,6 +3861,7 @@ var require_adminReferral_controller = __commonJS({
               staffReferralCode: staff.staffReferralCode,
               staffCommissionRules: staff.staffCommissionRules,
               usesGlobalCommissionRules: staff.usesGlobalCommissionRules,
+              passwordSetupRequired: staff.passwordSetupRequired,
               isVerified: staff.isVerified,
               createdAt: staff.createdAt
             }
@@ -3847,7 +3871,7 @@ var require_adminReferral_controller = __commonJS({
       );
     });
     var getStaffDetail = asyncHandler(async (req, res) => {
-      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt updatedAt").lean();
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt updatedAt").lean();
       if (!staff) throw new ApiError(404, "Staff member not found");
       const referralSettings = await ensureReferralSettings();
       const effectiveRules = staff.usesGlobalCommissionRules ? referralSettings.defaultRules : staff.staffCommissionRules;
@@ -4024,6 +4048,8 @@ var require_adminReferral_controller = __commonJS({
               type: req.body.action === "completed" ? "payout_completed" : "payout_rejected",
               amount: payout.amount,
               availableBalanceAfter: wallet.availableBalance,
+              reservedBalanceAfter: wallet.reservedBalance,
+              paidBalanceAfter: wallet.paidBalance,
               reference: payout._id,
               meta: { reason: payout.rejectionReason }
             }],
@@ -4107,7 +4133,7 @@ var require_referral_validator = __commonJS({
       param("staffId").optional().isMongoId().withMessage("staffId must be a valid id")
     ];
     var requestPayoutValidator = [
-      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0"),
+      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0").bail().custom((value) => /^\d+(?:\.\d{1,2})?$/.test(String(value))).withMessage("amount cannot have more than two decimal places"),
       body("method").isIn(["jazzcash", "easypaisa", "bank"]).withMessage("Invalid payout method"),
       body("accountDetails").trim().isLength({ min: 5, max: 300 }).withMessage("accountDetails must be 5 to 300 characters")
     ];
@@ -4765,6 +4791,8 @@ var require_staff_controller = __commonJS({
               type: "payout_requested",
               amount,
               availableBalanceAfter: wallet.availableBalance,
+              reservedBalanceAfter: wallet.reservedBalance,
+              paidBalanceAfter: wallet.paidBalance,
               reference: payout._id,
               meta: { method: payout.method, accountDetails: payout.accountDetails }
             }],

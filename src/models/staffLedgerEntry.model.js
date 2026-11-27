@@ -23,6 +23,18 @@ const staffLedgerEntrySchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    reservedBalanceAfter: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+    },
+    paidBalanceAfter: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+    },
     reference: {
       type: mongoose.Schema.Types.ObjectId,
       default: null,

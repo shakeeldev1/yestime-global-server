@@ -75,6 +75,8 @@ const createReferralReward = async (
         type: 'commission_earned',
         amount: commissionAmount,
         availableBalanceAfter: wallet.availableBalance,
+        reservedBalanceAfter: wallet.reservedBalance,
+        paidBalanceAfter: wallet.paidBalance,
         reference: reward._id,
         meta: {
           member: memberId,

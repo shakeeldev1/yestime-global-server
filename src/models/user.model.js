@@ -133,6 +133,10 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    passwordSetupRequired: {
+      type: Boolean,
+      default: false,
+    },
     otpHash: {
       type: String,
       default: null,

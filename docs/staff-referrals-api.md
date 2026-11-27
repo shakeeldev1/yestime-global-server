@@ -34,6 +34,7 @@ Payment request body:
 ```
 
 Allowed methods are `easypaisa`, `jazzcash`, and `bank`. On request, the amount moves from available to reserved commission. Admin rejection returns the reserved amount to the available balance; admin completion records the manual payout and moves it to the paid total.
+Payout amounts support up to two decimal places. New ledger entries include available, reserved, and paid balance snapshots after each event; older entries may not have all three snapshots.
 
 ## Admin endpoints
 
@@ -63,6 +64,6 @@ Rule values use this shape:
 
 `type` is `fixed` or `percentage`; percentage values are limited to 0–100. The staff creation request accepts the same object as `commissionRules` to set staff-specific rules; omit it to assign the current global rules.
 
-Staff set their initial password at the emailed `/set-password` link using the one-time code. If the email cannot be delivered, the account remains created; the staff member can request a fresh code from the password setup page. The same page supports password resets.
+Staff set their initial password at the emailed `/set-password` link using the one-time code. If the email cannot be delivered, the account remains created; the staff member can request a fresh code from the password setup page. The same page supports password resets. Admin staff list and detail responses include `passwordSetupRequired` so pending invitations can be distinguished from active accounts.
 
 The staff detail endpoint accepts independent page parameters `referralspage`, `rewardspage`, `payoutspage`, and `ledgerpage`, each with a matching `*limit` parameter (maximum 100). It returns complete totals independently of those pages.

@@ -160,6 +160,10 @@ const login = asyncHandler(async (req, res) => {
     throw new ApiError(403, 'Your account has been blocked');
   }
 
+  if (user.role === 'staff' && user.passwordSetupRequired) {
+    throw new ApiError(403, 'Set your password using the password setup link before signing in');
+  }
+
   const { accessToken, refreshToken } = await issueTokens(user);
   setAuthCookies(res, accessToken, refreshToken);
 
@@ -294,6 +298,7 @@ const resetPassword = asyncHandler(async (req, res) => {
 
   user.password = newPassword;
   user.clearOtp();
+  if (user.role === 'staff') user.passwordSetupRequired = false;
   await user.setRefreshToken(null); // revoke any existing sessions
   await user.save();
 

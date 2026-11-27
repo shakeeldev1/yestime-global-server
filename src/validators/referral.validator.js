@@ -69,7 +69,12 @@ const payoutListValidator = [
 ];
 
 const requestPayoutValidator = [
-  body('amount').isFloat({ min: 0.01 }).withMessage('amount must be greater than 0'),
+  body('amount')
+    .isFloat({ min: 0.01 })
+    .withMessage('amount must be greater than 0')
+    .bail()
+    .custom((value) => /^\d+(?:\.\d{1,2})?$/.test(String(value)))
+    .withMessage('amount cannot have more than two decimal places'),
   body('method').isIn(['jazzcash', 'easypaisa', 'bank']).withMessage('Invalid payout method'),
   body('accountDetails').trim().isLength({ min: 5, max: 300 }).withMessage('accountDetails must be 5 to 300 characters'),
 ];

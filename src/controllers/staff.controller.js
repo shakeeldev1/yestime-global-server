@@ -220,6 +220,8 @@ const requestPayout = asyncHandler(async (req, res) => {
           type: 'payout_requested',
           amount,
           availableBalanceAfter: wallet.availableBalance,
+          reservedBalanceAfter: wallet.reservedBalance,
+          paidBalanceAfter: wallet.paidBalance,
           reference: payout._id,
           meta: { method: payout.method, accountDetails: payout.accountDetails },
         }],
