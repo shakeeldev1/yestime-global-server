@@ -31,7 +31,10 @@ const createReferralCode = async () => {
 
 const listStaff = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
-  const filter = { role: 'staff' };
+  const filter = { role: 'staff', deletedAt: null };
+  if (req.query.isDeleted !== undefined) {
+    filter.deletedAt = req.query.isDeleted === 'true' ? { $ne: null } : null;
+  }
   const searchTerm = String(req.query.search || '').trim();
   if (searchTerm) {
     const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
@@ -45,7 +48,7 @@ const listStaff = asyncHandler(async (req, res) => {
 
   const [staffMembers, total] = await Promise.all([
     User.find(filter)
-      .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt')
+      .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked deletedAt createdAt')
       .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
@@ -163,7 +166,7 @@ const createStaff = asyncHandler(async (req, res) => {
 
 const getStaffDetail = asyncHandler(async (req, res) => {
   const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' })
-    .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt updatedAt')
+    .select('name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked deletedAt createdAt updatedAt')
     .lean();
   if (!staff) throw new ApiError(404, 'Staff member not found');
   const referralSettings = await ensureReferralSettings();
@@ -280,6 +283,12 @@ const updateStaff = asyncHandler(async (req, res) => {
   const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' });
   if (!staff) throw new ApiError(404, 'Staff member not found');
   if (req.body.name !== undefined) staff.name = req.body.name;
+  if (req.body.email !== undefined && req.body.email !== staff.email) {
+    if (await User.exists({ email: req.body.email, _id: { $ne: staff._id } })) {
+      throw new ApiError(409, 'An account with this email already exists');
+    }
+    staff.email = req.body.email;
+  }
   if (req.body.phoneNumber !== undefined) staff.phoneNumber = req.body.phoneNumber || null;
   if (req.body.isBlocked !== undefined) staff.isBlocked = req.body.isBlocked;
   if (req.body.commissionRules !== undefined) {
@@ -291,6 +300,29 @@ const updateStaff = asyncHandler(async (req, res) => {
   }
   await staff.save();
   res.status(200).json(new ApiResponse(200, { staff }, 'Staff member updated successfully'));
+});
+
+const deleteStaff = asyncHandler(async (req, res) => {
+  const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' });
+  if (!staff) throw new ApiError(404, 'Staff member not found');
+
+  if (!staff.deletedAt) {
+    staff.deletedAt = new Date();
+    staff.deletedBy = req.user._id;
+    await staff.setRefreshToken(null);
+    await staff.save();
+  }
+  res.status(200).json(new ApiResponse(200, { staff }, 'Staff account deactivated; referral and payment history retained'));
+});
+
+const restoreStaff = asyncHandler(async (req, res) => {
+  const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' });
+  if (!staff) throw new ApiError(404, 'Staff member not found');
+
+  staff.deletedAt = null;
+  staff.deletedBy = null;
+  await staff.save();
+  res.status(200).json(new ApiResponse(200, { staff }, 'Staff account restored successfully'));
 });
 
 const updateReferralSettings = asyncHandler(async (req, res) => {
@@ -409,6 +441,8 @@ module.exports = {
   createStaff,
   getStaffDetail,
   updateStaff,
+  deleteStaff,
+  restoreStaff,
   getReferralSettings,
   updateReferralSettings,
   listStaffPayouts,

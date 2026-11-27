@@ -7,6 +7,7 @@ const {
   blockUser,
   unblockUser,
   deleteUser,
+  restoreUser,
   creditUserWallet,
   getStats,
 } = require('../controllers/admin.controller');
@@ -38,6 +39,8 @@ const {
   createStaff,
   getStaffDetail,
   updateStaff,
+  deleteStaff,
+  restoreStaff,
   getReferralSettings,
   updateReferralSettings,
   listStaffPayouts,
@@ -65,6 +68,8 @@ router.get('/staff', staffListValidator, validate, listStaff);
 router.post('/staff', createStaffValidator, validate, createStaff);
 router.get('/staff/:staffId', staffDetailValidator, validate, getStaffDetail);
 router.patch('/staff/:staffId', updateStaffValidator, validate, updateStaff);
+router.delete('/staff/:staffId', staffDetailValidator, validate, deleteStaff);
+router.post('/staff/:staffId/restore', [param('staffId').isMongoId().withMessage('staffId must be a valid id')], validate, restoreStaff);
 router.get('/staff-payouts', payoutListValidator, validate, listStaffPayouts);
 router.get('/staff/:staffId/payouts', payoutListValidator, validate, listStaffPayouts);
 router.post('/staff-payouts/:payoutId/process', processPayoutValidator, validate, processStaffPayout);
@@ -76,6 +81,7 @@ router.patch('/users/:id', updateUserValidator, validate, updateUser);
 router.post('/users/:id/block', blockUser);
 router.post('/users/:id/unblock', unblockUser);
 router.delete('/users/:id', deleteUser);
+router.post('/users/:id/restore', [param('id').isMongoId().withMessage('id must be a valid id')], validate, restoreUser);
 router.post('/users/:id/wallet-credit', creditWalletValidator, validate, creditUserWallet);
 router.get('/payments', listPayments);
 router.get('/payments/:id', getPayment);

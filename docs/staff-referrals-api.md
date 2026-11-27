@@ -44,12 +44,16 @@ All admin endpoints below require an authenticated `admin` account.
 |---|---|---|
 | `GET` | `/api/admin/referral-settings` | Read global default rules |
 | `PATCH` | `/api/admin/referral-settings` | Set global default shopper and shopkeeper rules |
-| `GET` | `/api/admin/staff?search=&page=1&limit=20&isBlocked=&passwordSetupRequired=&isVerified=` | Search, filter and paginate staff with balance and referral totals |
-| `POST` | `/api/admin/staff` | Create a verified staff account, generate a referral code, and email a password-setup OTP/link |
+| `GET` | `/api/admin/staff?search=&page=1&limit=20&isBlocked=&isDeleted=&passwordSetupRequired=&isVerified=` | Search, filter and paginate staff with balance and referral totals |
+| `POST` | `/api/admin/staff` | Create a verified staff account, generate a referral code, and email a single-use password-setup link |
 | `GET` | `/api/admin/staff/:staffId` | Staff profile, summary, paginated referrals, commission rewards, payouts and ledger |
-| `PATCH` | `/api/admin/staff/:staffId` | Change staff profile, block status, commission rules or global-rule assignment |
+| `PATCH` | `/api/admin/staff/:staffId` | Edit staff profile, block status, commission rules or global-rule assignment |
+| `DELETE` | `/api/admin/staff/:staffId` | Deactivate the account while preserving referral and payment history |
+| `POST` | `/api/admin/staff/:staffId/restore` | Restore a deactivated staff account |
 | `GET` | `/api/admin/staff-payouts?status=pending&page=1&limit=20&search=` | Review and search payment requests across all staff |
 | `POST` | `/api/admin/staff-payouts/:payoutId/process` | Complete or reject a pending payment request |
+
+Deactivated staff cannot sign in. Their account is excluded from the staff list by default; pass `isDeleted=true` to review deactivated accounts. Restoring an account preserves its existing blocked status.
 
 Rule values use this shape:
 

@@ -26,6 +26,9 @@ const authenticate = asyncHandler(async (req, _res, next) => {
   if (user.isBlocked) {
     throw new ApiError(403, 'Your account has been blocked');
   }
+  if (user.deletedAt) {
+    throw new ApiError(403, 'Your account has been deactivated');
+  }
 
   req.user = user;
   next();

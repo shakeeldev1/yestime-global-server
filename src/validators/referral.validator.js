@@ -29,6 +29,7 @@ const staffListValidator = [
   ...paginationFields,
   query('search').optional().trim().isLength({ min: 1, max: 100 }).withMessage('search must be 1 to 100 characters'),
   query('isBlocked').optional().isIn(['true', 'false']).withMessage('isBlocked must be true or false'),
+  query('isDeleted').optional().isIn(['true', 'false']).withMessage('isDeleted must be true or false'),
 ];
 
 const createStaffValidator = [
@@ -41,6 +42,7 @@ const createStaffValidator = [
 const updateStaffValidator = [
   param('staffId').isMongoId().withMessage('staffId must be a valid id'),
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
+  body('email').optional().trim().isEmail().withMessage('A valid email is required').normalizeEmail(),
   body('phoneNumber').optional({ values: 'null' }).trim().isLength({ max: 20 }).withMessage('phoneNumber must be at most 20 characters'),
   body('isBlocked').optional().isBoolean().withMessage('isBlocked must be true or false'),
   body('usesGlobalCommissionRules').optional().isBoolean().withMessage('usesGlobalCommissionRules must be true or false'),

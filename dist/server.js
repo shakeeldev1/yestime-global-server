@@ -245,6 +245,16 @@ var require_user_model = __commonJS({
           type: Boolean,
           default: false
         },
+        deletedAt: {
+          type: Date,
+          default: null,
+          index: true
+        },
+        deletedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
         refreshTokenHash: {
           type: String,
           default: null,
@@ -656,7 +666,8 @@ var require_auth_controller = __commonJS({
         referringStaff = await User.findOne({
           staffReferralCode: referralCode,
           role: "staff",
-          isBlocked: false
+          isBlocked: false,
+          deletedAt: null
         }).select("_id");
         if (!referringStaff) {
           throw new ApiError(400, "Referral code is invalid or inactive");
@@ -702,7 +713,7 @@ var require_auth_controller = __commonJS({
     });
     var resendOtp = asyncHandler(async (req, res) => {
       const { email } = req.body;
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email, deletedAt: null });
       if (!user) {
         throw new ApiError(404, "No account found with this email");
       }
@@ -723,6 +734,9 @@ var require_auth_controller = __commonJS({
       }
       if (user.isBlocked) {
         throw new ApiError(403, "Your account has been blocked");
+      }
+      if (user.deletedAt) {
+        throw new ApiError(403, "Your account has been deactivated");
       }
       if (user.role === "staff" && user.passwordSetupRequired) {
         throw new ApiError(403, "Set your password using the password setup link before signing in");
@@ -748,7 +762,7 @@ var require_auth_controller = __commonJS({
         throw new ApiError(401, "Refresh token is invalid or expired");
       }
       const user = await User.findById(decoded.sub).select("+refreshTokenHash");
-      if (!user || !await user.compareRefreshToken(incomingRefreshToken)) {
+      if (!user || user.isBlocked || user.deletedAt || !await user.compareRefreshToken(incomingRefreshToken)) {
         throw new ApiError(401, "Refresh token is invalid or has been revoked");
       }
       const { accessToken, refreshToken: newRefreshToken } = await issueTokens(user);
@@ -799,7 +813,7 @@ var require_auth_controller = __commonJS({
     });
     var forgotPassword = asyncHandler(async (req, res) => {
       const { email } = req.body;
-      const user = await User.findOne({ email });
+      const user = await User.findOne({ email, deletedAt: null });
       if (user) {
         await issueAndSendOtp(user, "reset-password");
       }
@@ -807,7 +821,7 @@ var require_auth_controller = __commonJS({
     });
     var resetPassword = asyncHandler(async (req, res) => {
       const { email, otp, newPassword } = req.body;
-      const user = await User.findOne({ email }).select("+otpHash +otpExpiry +otpPurpose");
+      const user = await User.findOne({ email, deletedAt: null }).select("+otpHash +otpExpiry +otpPurpose");
       if (!user) {
         throw new ApiError(404, "No account found with this email");
       }
@@ -832,7 +846,9 @@ var require_auth_controller = __commonJS({
       const user = await User.findOne({
         passwordSetupTokenHash: tokenHash,
         role: "staff",
-        passwordSetupRequired: true
+        passwordSetupRequired: true,
+        isBlocked: false,
+        deletedAt: null
       }).select("+passwordSetupTokenHash +passwordSetupTokenExpiry");
       if (!user || !user.passwordSetupTokenExpiry || user.passwordSetupTokenExpiry < /* @__PURE__ */ new Date()) {
         throw new ApiError(400, "This password setup link is invalid or has expired. Ask your administrator to send a new one.");
@@ -1031,6 +1047,9 @@ var require_auth_middleware = __commonJS({
       }
       if (user.isBlocked) {
         throw new ApiError(403, "Your account has been blocked");
+      }
+      if (user.deletedAt) {
+        throw new ApiError(403, "Your account has been deactivated");
       }
       req.user = user;
       next();
@@ -3181,9 +3200,12 @@ var require_admin_controller = __commonJS({
     var listUsers = asyncHandler(async (req, res) => {
       const { role, businessType, isVerified, isBlocked, search } = req.query;
       const { page, limit, skip } = paginate(req.query);
-      const filter = {};
+      const filter = { role: { $ne: "staff" }, deletedAt: null };
       if (role) filter.role = role;
       if (businessType) filter.businessType = businessType;
+      if (req.query.isDeleted !== void 0) {
+        filter.deletedAt = req.query.isDeleted === "true" ? { $ne: null } : null;
+      }
       if (isVerified !== void 0) filter.isVerified = isVerified === "true";
       if (isBlocked !== void 0) filter.isBlocked = isBlocked === "true";
       if (search) {
@@ -3257,11 +3279,18 @@ var require_admin_controller = __commonJS({
       if (user.role === "staff" || req.body.role === "staff") {
         throw new ApiError(400, "Manage referral staff through the staff management dashboard");
       }
-      const { name, role, businessType } = req.body;
+      const { name, email, phoneNumber, role, businessType } = req.body;
       if (req.body.taxRate !== void 0) {
         throw new ApiError(400, "Tax rate is determined by the purchase category and cannot be changed per user");
       }
       if (name !== void 0) user.name = name;
+      if (email !== void 0 && email !== user.email) {
+        if (await User.exists({ email, _id: { $ne: user._id } })) {
+          throw new ApiError(409, "An account with this email already exists");
+        }
+        user.email = email;
+      }
+      if (phoneNumber !== void 0) user.phoneNumber = phoneNumber || null;
       if (role !== void 0) user.role = role;
       if (businessType !== void 0) {
         user.businessType = user.role === "shopkeeper" ? businessType : null;
@@ -3299,23 +3328,21 @@ var require_admin_controller = __commonJS({
       if (!user) {
         throw new ApiError(404, "User not found");
       }
-      if (user.role === "staff") {
-        throw new ApiError(400, "Staff records are retained for referral and payment history; block the account instead");
+      if (!user.deletedAt) {
+        user.deletedAt = /* @__PURE__ */ new Date();
+        user.deletedBy = req.user._id;
+        await user.setRefreshToken(null);
+        await user.save();
       }
-      const [wallet, tokenCount] = await Promise.all([
-        Wallet.findOne({ user: user._id }),
-        Token.countDocuments({ owner: user._id })
-      ]);
-      const hasBalance = wallet && (wallet.mainBalance > 0 || wallet.lotteryBalance > 0);
-      if (hasBalance || tokenCount > 0) {
-        throw new ApiError(
-          400,
-          "This user has wallet balance or tokens on record and cannot be deleted \u2014 block the account instead"
-        );
-      }
-      await User.findByIdAndDelete(user._id);
-      if (wallet) await Wallet.deleteOne({ _id: wallet._id });
-      res.status(200).json(new ApiResponse(200, null, "User deleted successfully"));
+      res.status(200).json(new ApiResponse(200, { user }, "User deactivated; account and history retained"));
+    });
+    var restoreUser = asyncHandler(async (req, res) => {
+      const user = await User.findById(req.params.id);
+      if (!user) throw new ApiError(404, "User not found");
+      user.deletedAt = null;
+      user.deletedBy = null;
+      await user.save();
+      res.status(200).json(new ApiResponse(200, { user }, "User restored successfully"));
     });
     var creditUserWallet = asyncHandler(async (req, res) => {
       const user = await User.findById(req.params.id).select("_id name email");
@@ -3346,10 +3373,10 @@ var require_admin_controller = __commonJS({
         pendingWithdrawals,
         company
       ] = await Promise.all([
-        User.countDocuments(),
-        User.countDocuments({ role: "shopper" }),
-        User.countDocuments({ role: "shopkeeper" }),
-        User.countDocuments({ isBlocked: true }),
+        User.countDocuments({ role: { $ne: "staff" }, deletedAt: null }),
+        User.countDocuments({ role: "shopper", deletedAt: null }),
+        User.countDocuments({ role: "shopkeeper", deletedAt: null }),
+        User.countDocuments({ isBlocked: true, role: { $ne: "staff" }, deletedAt: null }),
         Token.countDocuments(),
         Token.countDocuments({ status: "completed" }),
         Purchase.aggregate([{ $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: "$amount" } } }]),
@@ -3390,6 +3417,7 @@ var require_admin_controller = __commonJS({
       blockUser,
       unblockUser,
       deleteUser,
+      restoreUser,
       creditUserWallet,
       getStats
     };
@@ -3719,6 +3747,7 @@ var require_admin_validator = __commonJS({
       query("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
       query("isVerified").optional().isIn(["true", "false"]).withMessage("isVerified must be true or false"),
       query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false"),
+      query("isDeleted").optional().isIn(["true", "false"]).withMessage("isDeleted must be true or false"),
       query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
       query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
     ];
@@ -3731,6 +3760,8 @@ var require_admin_validator = __commonJS({
     ];
     var updateUserValidator = [
       body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
+      body("email").optional().trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
+      body("phoneNumber").optional({ values: "null" }).trim().isLength({ max: 20 }).withMessage("phoneNumber must be at most 20 characters"),
       body("role").optional().isIn(["shopper", "shopkeeper", "staff", "admin"]).withMessage("Invalid role"),
       body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType")
     ];
@@ -3830,7 +3861,10 @@ var require_adminReferral_controller = __commonJS({
     };
     var listStaff = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
-      const filter = { role: "staff" };
+      const filter = { role: "staff", deletedAt: null };
+      if (req.query.isDeleted !== void 0) {
+        filter.deletedAt = req.query.isDeleted === "true" ? { $ne: null } : null;
+      }
       const searchTerm = String(req.query.search || "").trim();
       if (searchTerm) {
         const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
@@ -3842,7 +3876,7 @@ var require_adminReferral_controller = __commonJS({
       }
       if (req.query.isVerified !== void 0) filter.isVerified = req.query.isVerified === "true";
       const [staffMembers, total] = await Promise.all([
-        User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked deletedAt createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         User.countDocuments(filter)
       ]);
       const settings = await ensureReferralSettings();
@@ -3950,7 +3984,7 @@ var require_adminReferral_controller = __commonJS({
       );
     });
     var getStaffDetail = asyncHandler(async (req, res) => {
-      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt updatedAt").lean();
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked deletedAt createdAt updatedAt").lean();
       if (!staff) throw new ApiError(404, "Staff member not found");
       const referralSettings = await ensureReferralSettings();
       const effectiveRules = staff.usesGlobalCommissionRules ? referralSettings.defaultRules : staff.staffCommissionRules;
@@ -4049,6 +4083,12 @@ var require_adminReferral_controller = __commonJS({
       const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
       if (!staff) throw new ApiError(404, "Staff member not found");
       if (req.body.name !== void 0) staff.name = req.body.name;
+      if (req.body.email !== void 0 && req.body.email !== staff.email) {
+        if (await User.exists({ email: req.body.email, _id: { $ne: staff._id } })) {
+          throw new ApiError(409, "An account with this email already exists");
+        }
+        staff.email = req.body.email;
+      }
       if (req.body.phoneNumber !== void 0) staff.phoneNumber = req.body.phoneNumber || null;
       if (req.body.isBlocked !== void 0) staff.isBlocked = req.body.isBlocked;
       if (req.body.commissionRules !== void 0) {
@@ -4060,6 +4100,25 @@ var require_adminReferral_controller = __commonJS({
       }
       await staff.save();
       res.status(200).json(new ApiResponse(200, { staff }, "Staff member updated successfully"));
+    });
+    var deleteStaff = asyncHandler(async (req, res) => {
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
+      if (!staff) throw new ApiError(404, "Staff member not found");
+      if (!staff.deletedAt) {
+        staff.deletedAt = /* @__PURE__ */ new Date();
+        staff.deletedBy = req.user._id;
+        await staff.setRefreshToken(null);
+        await staff.save();
+      }
+      res.status(200).json(new ApiResponse(200, { staff }, "Staff account deactivated; referral and payment history retained"));
+    });
+    var restoreStaff = asyncHandler(async (req, res) => {
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
+      if (!staff) throw new ApiError(404, "Staff member not found");
+      staff.deletedAt = null;
+      staff.deletedBy = null;
+      await staff.save();
+      res.status(200).json(new ApiResponse(200, { staff }, "Staff account restored successfully"));
     });
     var updateReferralSettings = asyncHandler(async (req, res) => {
       const settings = await ReferralSettings.findOneAndUpdate(
@@ -4162,6 +4221,8 @@ var require_adminReferral_controller = __commonJS({
       createStaff,
       getStaffDetail,
       updateStaff,
+      deleteStaff,
+      restoreStaff,
       getReferralSettings,
       updateReferralSettings,
       listStaffPayouts,
@@ -4190,7 +4251,8 @@ var require_referral_validator = __commonJS({
     var staffListValidator = [
       ...paginationFields,
       query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
-      query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false")
+      query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false"),
+      query("isDeleted").optional().isIn(["true", "false"]).withMessage("isDeleted must be true or false")
     ];
     var createStaffValidator = [
       body("name").trim().notEmpty().withMessage("Name is required"),
@@ -4201,6 +4263,7 @@ var require_referral_validator = __commonJS({
     var updateStaffValidator = [
       param("staffId").isMongoId().withMessage("staffId must be a valid id"),
       body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
+      body("email").optional().trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
       body("phoneNumber").optional({ values: "null" }).trim().isLength({ max: 20 }).withMessage("phoneNumber must be at most 20 characters"),
       body("isBlocked").optional().isBoolean().withMessage("isBlocked must be true or false"),
       body("usesGlobalCommissionRules").optional().isBoolean().withMessage("usesGlobalCommissionRules must be true or false"),
@@ -4260,6 +4323,7 @@ var require_admin_routes = __commonJS({
       blockUser,
       unblockUser,
       deleteUser,
+      restoreUser,
       creditUserWallet,
       getStats
     } = require_admin_controller();
@@ -4291,6 +4355,8 @@ var require_admin_routes = __commonJS({
       createStaff,
       getStaffDetail,
       updateStaff,
+      deleteStaff,
+      restoreStaff,
       getReferralSettings,
       updateReferralSettings,
       listStaffPayouts,
@@ -4314,6 +4380,8 @@ var require_admin_routes = __commonJS({
     router.post("/staff", createStaffValidator, validate, createStaff);
     router.get("/staff/:staffId", staffDetailValidator, validate, getStaffDetail);
     router.patch("/staff/:staffId", updateStaffValidator, validate, updateStaff);
+    router.delete("/staff/:staffId", staffDetailValidator, validate, deleteStaff);
+    router.post("/staff/:staffId/restore", [param("staffId").isMongoId().withMessage("staffId must be a valid id")], validate, restoreStaff);
     router.get("/staff-payouts", payoutListValidator, validate, listStaffPayouts);
     router.get("/staff/:staffId/payouts", payoutListValidator, validate, listStaffPayouts);
     router.post("/staff-payouts/:payoutId/process", processPayoutValidator, validate, processStaffPayout);
@@ -4324,6 +4392,7 @@ var require_admin_routes = __commonJS({
     router.post("/users/:id/block", blockUser);
     router.post("/users/:id/unblock", unblockUser);
     router.delete("/users/:id", deleteUser);
+    router.post("/users/:id/restore", [param("id").isMongoId().withMessage("id must be a valid id")], validate, restoreUser);
     router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
     router.get("/payments", listPayments);
     router.get("/payments/:id", getPayment);

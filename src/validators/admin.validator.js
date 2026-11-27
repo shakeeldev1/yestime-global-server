@@ -8,6 +8,7 @@ const listUsersValidator = [
     .withMessage('Invalid businessType'),
   query('isVerified').optional().isIn(['true', 'false']).withMessage('isVerified must be true or false'),
   query('isBlocked').optional().isIn(['true', 'false']).withMessage('isBlocked must be true or false'),
+  query('isDeleted').optional().isIn(['true', 'false']).withMessage('isDeleted must be true or false'),
   query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
 ];
@@ -28,6 +29,8 @@ const createUserValidator = [
 
 const updateUserValidator = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
+  body('email').optional().trim().isEmail().withMessage('A valid email is required').normalizeEmail(),
+  body('phoneNumber').optional({ values: 'null' }).trim().isLength({ max: 20 }).withMessage('phoneNumber must be at most 20 characters'),
   body('role').optional().isIn(['shopper', 'shopkeeper', 'staff', 'admin']).withMessage('Invalid role'),
   body('businessType')
     .optional()

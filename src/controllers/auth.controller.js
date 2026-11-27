@@ -67,6 +67,7 @@ const signup = asyncHandler(async (req, res) => {
       staffReferralCode: referralCode,
       role: 'staff',
       isBlocked: false,
+      deletedAt: null,
     }).select('_id');
     if (!referringStaff) {
       throw new ApiError(400, 'Referral code is invalid or inactive');
@@ -130,7 +131,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
 const resendOtp = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email, deletedAt: null });
   if (!user) {
     throw new ApiError(404, 'No account found with this email');
   }
@@ -159,6 +160,9 @@ const login = asyncHandler(async (req, res) => {
 
   if (user.isBlocked) {
     throw new ApiError(403, 'Your account has been blocked');
+  }
+  if (user.deletedAt) {
+    throw new ApiError(403, 'Your account has been deactivated');
   }
 
   if (user.role === 'staff' && user.passwordSetupRequired) {
@@ -194,7 +198,7 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findById(decoded.sub).select('+refreshTokenHash');
-  if (!user || !(await user.compareRefreshToken(incomingRefreshToken))) {
+  if (!user || user.isBlocked || user.deletedAt || !(await user.compareRefreshToken(incomingRefreshToken))) {
     throw new ApiError(401, 'Refresh token is invalid or has been revoked');
   }
 
@@ -269,7 +273,7 @@ const changePassword = asyncHandler(async (req, res) => {
 const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email, deletedAt: null });
   if (user) {
     await issueAndSendOtp(user, 'reset-password');
   }
@@ -284,7 +288,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
 const resetPassword = asyncHandler(async (req, res) => {
   const { email, otp, newPassword } = req.body;
 
-  const user = await User.findOne({ email }).select('+otpHash +otpExpiry +otpPurpose');
+  const user = await User.findOne({ email, deletedAt: null }).select('+otpHash +otpExpiry +otpPurpose');
   if (!user) {
     throw new ApiError(404, 'No account found with this email');
   }
@@ -316,6 +320,8 @@ const setPasswordWithToken = asyncHandler(async (req, res) => {
     passwordSetupTokenHash: tokenHash,
     role: 'staff',
     passwordSetupRequired: true,
+    isBlocked: false,
+    deletedAt: null,
   }).select('+passwordSetupTokenHash +passwordSetupTokenExpiry');
 
   if (!user || !user.passwordSetupTokenExpiry || user.passwordSetupTokenExpiry < new Date()) {

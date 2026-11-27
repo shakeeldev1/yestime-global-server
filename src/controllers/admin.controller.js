@@ -22,9 +22,12 @@ const listUsers = asyncHandler(async (req, res) => {
   const { role, businessType, isVerified, isBlocked, search } = req.query;
   const { page, limit, skip } = paginate(req.query);
 
-  const filter = {};
+  const filter = { role: { $ne: 'staff' }, deletedAt: null };
   if (role) filter.role = role;
   if (businessType) filter.businessType = businessType;
+  if (req.query.isDeleted !== undefined) {
+    filter.deletedAt = req.query.isDeleted === 'true' ? { $ne: null } : null;
+  }
   if (isVerified !== undefined) filter.isVerified = isVerified === 'true';
   if (isBlocked !== undefined) filter.isBlocked = isBlocked === 'true';
   if (search) {
@@ -120,13 +123,20 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Manage referral staff through the staff management dashboard');
   }
 
-  const { name, role, businessType } = req.body;
+  const { name, email, phoneNumber, role, businessType } = req.body;
 
   if (req.body.taxRate !== undefined) {
     throw new ApiError(400, 'Tax rate is determined by the purchase category and cannot be changed per user');
   }
 
   if (name !== undefined) user.name = name;
+  if (email !== undefined && email !== user.email) {
+    if (await User.exists({ email, _id: { $ne: user._id } })) {
+      throw new ApiError(409, 'An account with this email already exists');
+    }
+    user.email = email;
+  }
+  if (phoneNumber !== undefined) user.phoneNumber = phoneNumber || null;
   if (role !== undefined) user.role = role;
 
   if (businessType !== undefined) {
@@ -169,8 +179,7 @@ const unblockUser = asyncHandler(async (req, res) => {
 });
 
 // DELETE /api/admin/users/:id
-// Only allowed when the account has no financial footprint — otherwise block
-// it instead, to avoid orphaning wallet/token/purchase records.
+// Deactivate the account without removing wallet, token, or transaction history.
 const deleteUser = asyncHandler(async (req, res) => {
   if (req.params.id === req.user._id.toString()) {
     throw new ApiError(400, 'You cannot delete your own account');
@@ -180,27 +189,25 @@ const deleteUser = asyncHandler(async (req, res) => {
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
-  if (user.role === 'staff') {
-    throw new ApiError(400, 'Staff records are retained for referral and payment history; block the account instead');
+  if (!user.deletedAt) {
+    user.deletedAt = new Date();
+    user.deletedBy = req.user._id;
+    await user.setRefreshToken(null);
+    await user.save();
   }
 
-  const [wallet, tokenCount] = await Promise.all([
-    Wallet.findOne({ user: user._id }),
-    Token.countDocuments({ owner: user._id }),
-  ]);
+  res.status(200).json(new ApiResponse(200, { user }, 'User deactivated; account and history retained'));
+});
 
-  const hasBalance = wallet && (wallet.mainBalance > 0 || wallet.lotteryBalance > 0);
-  if (hasBalance || tokenCount > 0) {
-    throw new ApiError(
-      400,
-      'This user has wallet balance or tokens on record and cannot be deleted — block the account instead'
-    );
-  }
+// POST /api/admin/users/:id/restore
+const restoreUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) throw new ApiError(404, 'User not found');
 
-  await User.findByIdAndDelete(user._id);
-  if (wallet) await Wallet.deleteOne({ _id: wallet._id });
-
-  res.status(200).json(new ApiResponse(200, null, 'User deleted successfully'));
+  user.deletedAt = null;
+  user.deletedBy = null;
+  await user.save();
+  res.status(200).json(new ApiResponse(200, { user }, 'User restored successfully'));
 });
 
 // POST /api/admin/users/:id/wallet-credit
@@ -237,10 +244,10 @@ const getStats = asyncHandler(async (req, res) => {
     pendingWithdrawals,
     company,
   ] = await Promise.all([
-    User.countDocuments(),
-    User.countDocuments({ role: 'shopper' }),
-    User.countDocuments({ role: 'shopkeeper' }),
-    User.countDocuments({ isBlocked: true }),
+    User.countDocuments({ role: { $ne: 'staff' }, deletedAt: null }),
+    User.countDocuments({ role: 'shopper', deletedAt: null }),
+    User.countDocuments({ role: 'shopkeeper', deletedAt: null }),
+    User.countDocuments({ isBlocked: true, role: { $ne: 'staff' }, deletedAt: null }),
     Token.countDocuments(),
     Token.countDocuments({ status: 'completed' }),
     Purchase.aggregate([{ $group: { _id: null, count: { $sum: 1 }, totalAmount: { $sum: '$amount' } } }]),
@@ -283,6 +290,7 @@ module.exports = {
   blockUser,
   unblockUser,
   deleteUser,
+  restoreUser,
   creditUserWallet,
   getStats,
 };
