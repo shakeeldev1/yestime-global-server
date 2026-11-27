@@ -27,7 +27,7 @@ var require_env = __commonJS({
       SMTP_SECURE: process.env.SMTP_SECURE === "true",
       SMTP_USER: process.env.SMTP_USER,
       SMTP_PASS: process.env.SMTP_PASS,
-      MAIL_FROM: process.env.MAIL_FROM || "No Reply <no-reply@example.com>",
+      MAIL_FROM: process.env.MAIL_FROM || process.env.SMTP_USER,
       ADMIN_EMAIL: process.env.ADMIN_EMAIL || "info@yestimeglobal.com",
       CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
       CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
