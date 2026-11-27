@@ -2,9 +2,11 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const Shop = require('../models/shop.model');
+const User = require('../models/user.model');
 const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../services/wallet.service');
 const { uploadImageBuffer } = require('../lib/cloudinary');
 const { notifyAdmin, notifyUser } = require('../utils/mailer');
+const { getCompanyRate } = require('../utils/commission');
 
 const SHOPKEEPER_REGISTRATION_FEE = 3000;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
@@ -104,8 +106,12 @@ const listShopkeepers = asyncHandler(async (req, res) => {
 
 // GET /api/shopkeepers/mine (authenticated) — the current user's own shops
 const myShops = asyncHandler(async (req, res) => {
-  const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 });
-  res.status(200).json(new ApiResponse(200, { shops }, 'Your shops fetched successfully'));
+  const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
+  const shopsWithCommission = shops.map((shop) => ({
+    ...shop,
+    commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0]),
+  }));
+  res.status(200).json(new ApiResponse(200, { shops: shopsWithCommission }, 'Your shops fetched successfully'));
 });
 
 // POST /api/shopkeepers/register
@@ -120,6 +126,8 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
 
   const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
   const businessType = getBusinessType(categories[0]);
+  const commissionRate = getCompanyRate(categories[0]);
+  const isFirstShop = !(await Shop.exists({ owner: user._id }));
   let imageUrl = null;
 
   if (req.file) {
@@ -152,6 +160,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     businessDescription: description || null,
     businessImage: imageUrl,
     businessCategories: [...new Set(categories)],
+    commissionRate,
     city,
     location: { type: 'Point', coordinates: [lng, lat] },
     registrationFee: SHOPKEEPER_REGISTRATION_FEE,
@@ -159,12 +168,10 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     isVerified: false,
   });
 
-  // First shop also flips the account into shopkeeper mode and keeps the
-  // account-level business fields (used elsewhere for tax/commission and
-  // display purposes) in sync with it. Later shops don't touch these —
-  // they only add another entry to the directory.
-  if (user.role === 'shopper') {
-    user.role = 'shopkeeper';
+  // The first shop is the account's primary business; later registrations
+  // remain shop-specific and do not replace its account-level settings.
+  if (isFirstShop) {
+    if (user.role === 'shopper') user.role = 'shopkeeper';
     user.businessType = businessType;
     user.shopName = shopName;
     user.phoneNumber = phoneNumber;
@@ -172,6 +179,7 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     user.businessDescription = description || null;
     user.businessImage = imageUrl;
     user.businessCategories = [...new Set(categories)];
+    user.taxRate = commissionRate;
     user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
     user.shopkeeperRegisteredAt = new Date();
     await user.save();
@@ -221,6 +229,7 @@ const updateShop = asyncHandler(async (req, res) => {
   if (categories !== undefined) {
     shop.businessCategories = [...new Set(categories)];
     shop.businessType = getBusinessType(categories[0]);
+    shop.commissionRate = getCompanyRate(categories[0]);
   }
   if (city !== undefined) shop.city = city;
   if (lat !== undefined && lng !== undefined) {
@@ -228,6 +237,25 @@ const updateShop = asyncHandler(async (req, res) => {
   }
 
   await shop.save();
+
+  if (categories !== undefined) {
+    const primaryShop = await Shop.findOne({ owner: shop.owner })
+      .sort({ createdAt: 1, _id: 1 })
+      .select('_id')
+      .lean();
+    if (primaryShop && String(primaryShop._id) === String(shop._id)) {
+      await User.updateOne(
+        { _id: shop.owner },
+        {
+          $set: {
+            businessType: shop.businessType,
+            businessCategories: shop.businessCategories,
+            taxRate: shop.commissionRate,
+          },
+        }
+      );
+    }
+  }
 
   res.status(200).json(new ApiResponse(200, { shop }, 'Shop updated successfully'));
 });

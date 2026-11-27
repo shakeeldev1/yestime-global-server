@@ -4,6 +4,7 @@ const { SHOPKEEPER_CATEGORIES } = require('./shopkeeper.validator');
 const PURCHASE_CATEGORIES = [...SHOPKEEPER_CATEGORIES, 'shop', 'bike'];
 
 const recordPurchaseValidator = [
+  body('shopId').optional().isMongoId().withMessage('shopId must be a valid id'),
   body('category')
     .isIn(PURCHASE_CATEGORIES)
     .withMessage(`category must be one of ${PURCHASE_CATEGORIES.join(', ')}`),

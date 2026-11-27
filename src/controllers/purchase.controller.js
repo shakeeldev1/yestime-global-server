@@ -25,10 +25,33 @@ const applyPurchase = async ({ payerId, buyerId, amount, companyAmount, meta }) 
 // POST /api/purchases (shopkeeper only — covers both `shop` sales and
 // property/car/bike deals submitted by a registered dealer)
 const recordPurchase = asyncHandler(async (req, res) => {
-  const { tokenNumber, amount, category } = req.body;
+  const { tokenNumber, amount, category, shopId } = req.body;
   const shopkeeper = req.user;
 
-  if (!shopkeeper.businessType) {
+  let selectedShop = null;
+  if (shopId) {
+    selectedShop = await Shop.findById(shopId)
+      .select('owner businessType businessCategories commissionRate')
+      .lean();
+    if (!selectedShop) {
+      throw new ApiError(404, 'Shop not found');
+    }
+    if (String(selectedShop.owner) !== String(shopkeeper._id)) {
+      throw new ApiError(403, 'You do not own this shop');
+    }
+  }
+
+  const purchaseShop =
+    selectedShop ||
+    (await Shop.findOne({
+      owner: shopkeeper._id,
+      $or: [{ approvalStatus: 'approved' }, { approvalStatus: { $exists: false }, isVerified: true }],
+    })
+      .sort({ createdAt: -1, _id: -1 })
+      .select('businessType businessCategories commissionRate')
+      .lean());
+
+  if (!shopkeeper.businessType && !purchaseShop) {
     throw new ApiError(400, 'Your account is missing a business type');
   }
 
@@ -48,8 +71,10 @@ const recordPurchase = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'This token is no longer active; ask the buyer for their current token number');
   }
 
-  const isShop = shopkeeper.businessType === 'shop';
-  const taxRate = getCompanyRate(category);
+  const isShop = (purchaseShop?.businessType || shopkeeper.businessType) === 'shop';
+  const taxRate = purchaseShop
+    ? purchaseShop.commissionRate ?? getCompanyRate(purchaseShop.businessCategories?.[0])
+    : shopkeeper.taxRate ?? getCompanyRate(category);
   const taxAmount = round2(amount * (taxRate / 100));
   const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
 

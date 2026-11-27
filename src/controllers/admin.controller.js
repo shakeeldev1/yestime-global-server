@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const User = require('../models/user.model');
+const Shop = require('../models/shop.model');
 const Wallet = require('../models/wallet.model');
 const Token = require('../models/token.model');
 const Purchase = require('../models/purchase.model');
@@ -38,10 +39,31 @@ const listUsers = asyncHandler(async (req, res) => {
     User.countDocuments(filter),
   ]);
 
+  let listedUsers = users;
+  if (role === 'shopkeeper' && users.length > 0) {
+    const shops = await Shop.find({ owner: { $in: users.map((user) => user._id) } })
+      .select('owner shopName')
+      .sort({ createdAt: 1 })
+      .lean();
+    const shopsByOwner = new Map();
+
+    for (const shop of shops) {
+      const ownerId = String(shop.owner);
+      const ownerShops = shopsByOwner.get(ownerId) || [];
+      ownerShops.push({ _id: shop._id, shopName: shop.shopName });
+      shopsByOwner.set(ownerId, ownerShops);
+    }
+
+    listedUsers = users.map((user) => ({
+      ...user.toObject(),
+      shops: shopsByOwner.get(String(user._id)) || [],
+    }));
+  }
+
   res.status(200).json(
     new ApiResponse(
       200,
-      { users, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+      { users: listedUsers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
       'Users fetched successfully'
     )
   );

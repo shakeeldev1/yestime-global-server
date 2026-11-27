@@ -43,6 +43,11 @@ const shopSchema = new mongoose.Schema(
       enum: ['shopping', 'wholesale', 'petrol_diesel', 'motorcycle_scooty', 'car', 'property', 'crop', 'self_service_saving', 'education', 'factory', 'foodpoint', 'cosmetic', 'jewelry', 'fruit', 'vegetable seller', 'other_custom'],
       default: [],
     },
+    commissionRate: {
+      type: Number,
+      required: true,
+      default: 2.5,
+    },
     // city/location are required on new registrations (enforced by the
     // registration validator) but left unset on shops backfilled from
     // legacy user records that never captured a location — those simply

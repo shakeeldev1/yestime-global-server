@@ -264,6 +264,147 @@ var require_user_model = __commonJS({
   }
 });
 
+// src/models/shop.model.js
+var require_shop_model = __commonJS({
+  "src/models/shop.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var shopSchema = new mongoose.Schema(
+      {
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        businessType: {
+          type: String,
+          enum: ["shop", "property", "car", "bike"],
+          required: true
+        },
+        shopName: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        phoneNumber: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessAddress: {
+          type: String,
+          trim: true,
+          required: true
+        },
+        businessDescription: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessImage: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        businessCategories: {
+          type: [String],
+          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller", "other_custom"],
+          default: []
+        },
+        commissionRate: {
+          type: Number,
+          required: true,
+          default: 2.5
+        },
+        // city/location are required on new registrations (enforced by the
+        // registration validator) but left unset on shops backfilled from
+        // legacy user records that never captured a location — those simply
+        // won't surface in city/"near me" searches until the owner sets one.
+        city: {
+          type: String,
+          trim: true,
+          default: null,
+          index: true
+        },
+        location: {
+          type: {
+            type: String,
+            enum: ["Point"]
+          },
+          coordinates: {
+            // [longitude, latitude]
+            type: [Number]
+          }
+        },
+        registrationFee: {
+          type: Number,
+          default: 0
+        },
+        approvalStatus: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          index: true
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          trim: true,
+          default: null
+        },
+        isVerified: {
+          type: Boolean,
+          default: true
+        },
+        isBlocked: {
+          type: Boolean,
+          default: false
+        }
+      },
+      { timestamps: true }
+    );
+    shopSchema.index({ location: "2dsphere" });
+    module2.exports = mongoose.model("Shop", shopSchema);
+  }
+});
+
+// src/utils/commission.js
+var require_commission = __commonJS({
+  "src/utils/commission.js"(exports2, module2) {
+    var DEFAULT_COMPANY_RATE = 2.5;
+    var COMPANY_RATES = {
+      shop: 2.5,
+      shopping: 2.5,
+      wholesale: 2.5,
+      petrol_diesel: 0.5,
+      car: 1,
+      motorcycle_scooty: 1,
+      property: 1,
+      crop: 2.5,
+      self_service_saving: 2.5,
+      education: 2.5,
+      factory: 2.5,
+      foodpoint: 2.5,
+      cosmetic: 2.5,
+      jewelry: 2.5,
+      fruit: 2.5,
+      "vegetable seller": 2.5,
+      other_custom: 2.5
+    };
+    var getCompanyRate = (category) => COMPANY_RATES[category] ?? DEFAULT_COMPANY_RATE;
+    var DEALER_OWN_RATE = 1;
+    module2.exports = { getCompanyRate, DEALER_OWN_RATE };
+  }
+});
+
 // src/utils/jwt.js
 var require_jwt = __commonJS({
   "src/utils/jwt.js"(exports2, module2) {
@@ -356,6 +497,8 @@ var require_auth_controller = __commonJS({
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
     var User = require_user_model();
+    var Shop = require_shop_model();
+    var { getCompanyRate } = require_commission();
     var env2 = require_env();
     var { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require_jwt();
     var { generateOtp, hashOtp, compareOtp, getOtpExpiry } = require_otp();
@@ -491,7 +634,12 @@ var require_auth_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, { accessToken }, "Access token refreshed successfully"));
     });
     var myProfile = asyncHandler(async (req, res) => {
-      res.status(200).json(new ApiResponse(200, { user: req.user }, "Profile fetched successfully"));
+      const primaryShop = await Shop.findOne({ owner: req.user._id }).sort({ createdAt: 1, _id: 1 }).select("commissionRate businessCategories").lean();
+      const user = req.user.toObject();
+      if (primaryShop) {
+        user.taxRate = primaryShop.commissionRate ?? getCompanyRate(primaryShop.businessCategories?.[0]);
+      }
+      res.status(200).json(new ApiResponse(200, { user }, "Profile fetched successfully"));
     });
     var updateProfile = asyncHandler(async (req, res) => {
       const user = req.user;
@@ -1971,143 +2119,6 @@ var require_purchase_model = __commonJS({
   }
 });
 
-// src/models/shop.model.js
-var require_shop_model = __commonJS({
-  "src/models/shop.model.js"(exports2, module2) {
-    var mongoose = require("mongoose");
-    var shopSchema = new mongoose.Schema(
-      {
-        owner: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true,
-          index: true
-        },
-        businessType: {
-          type: String,
-          enum: ["shop", "property", "car", "bike"],
-          required: true
-        },
-        shopName: {
-          type: String,
-          trim: true,
-          required: true
-        },
-        phoneNumber: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessAddress: {
-          type: String,
-          trim: true,
-          required: true
-        },
-        businessDescription: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessImage: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        businessCategories: {
-          type: [String],
-          enum: ["shopping", "wholesale", "petrol_diesel", "motorcycle_scooty", "car", "property", "crop", "self_service_saving", "education", "factory", "foodpoint", "cosmetic", "jewelry", "fruit", "vegetable seller", "other_custom"],
-          default: []
-        },
-        // city/location are required on new registrations (enforced by the
-        // registration validator) but left unset on shops backfilled from
-        // legacy user records that never captured a location — those simply
-        // won't surface in city/"near me" searches until the owner sets one.
-        city: {
-          type: String,
-          trim: true,
-          default: null,
-          index: true
-        },
-        location: {
-          type: {
-            type: String,
-            enum: ["Point"]
-          },
-          coordinates: {
-            // [longitude, latitude]
-            type: [Number]
-          }
-        },
-        registrationFee: {
-          type: Number,
-          default: 0
-        },
-        approvalStatus: {
-          type: String,
-          enum: ["pending", "approved", "rejected"],
-          default: "pending",
-          index: true
-        },
-        reviewedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          default: null
-        },
-        reviewedAt: {
-          type: Date,
-          default: null
-        },
-        rejectionReason: {
-          type: String,
-          trim: true,
-          default: null
-        },
-        isVerified: {
-          type: Boolean,
-          default: true
-        },
-        isBlocked: {
-          type: Boolean,
-          default: false
-        }
-      },
-      { timestamps: true }
-    );
-    shopSchema.index({ location: "2dsphere" });
-    module2.exports = mongoose.model("Shop", shopSchema);
-  }
-});
-
-// src/utils/commission.js
-var require_commission = __commonJS({
-  "src/utils/commission.js"(exports2, module2) {
-    var DEFAULT_COMPANY_RATE = 2.5;
-    var COMPANY_RATES = {
-      shop: 2.5,
-      shopping: 2.5,
-      wholesale: 2.5,
-      petrol_diesel: 0.5,
-      car: 1,
-      motorcycle_scooty: 1,
-      bike: 1,
-      property: 1,
-      crop: 2.5,
-      self_service_saving: 2.5,
-      education: 2.5,
-      factory: 2.5,
-      foodpoint: 2.5,
-      cosmetic: 2.5,
-      jewelry: 2.5,
-      fruit: 2.5,
-      "vegetable seller": 2.5,
-      other_custom: 2.5
-    };
-    var getCompanyRate = (category) => COMPANY_RATES[category] ?? DEFAULT_COMPANY_RATE;
-    var DEALER_OWN_RATE = 1;
-    module2.exports = { getCompanyRate, DEALER_OWN_RATE };
-  }
-});
-
 // src/controllers/purchase.controller.js
 var require_purchase_controller = __commonJS({
   "src/controllers/purchase.controller.js"(exports2, module2) {
@@ -2128,9 +2139,23 @@ var require_purchase_controller = __commonJS({
       return contributeToActiveToken(buyerId, amount);
     };
     var recordPurchase = asyncHandler(async (req, res) => {
-      const { tokenNumber, amount, category } = req.body;
+      const { tokenNumber, amount, category, shopId } = req.body;
       const shopkeeper = req.user;
-      if (!shopkeeper.businessType) {
+      let selectedShop = null;
+      if (shopId) {
+        selectedShop = await Shop.findById(shopId).select("owner businessType businessCategories commissionRate").lean();
+        if (!selectedShop) {
+          throw new ApiError(404, "Shop not found");
+        }
+        if (String(selectedShop.owner) !== String(shopkeeper._id)) {
+          throw new ApiError(403, "You do not own this shop");
+        }
+      }
+      const purchaseShop = selectedShop || await Shop.findOne({
+        owner: shopkeeper._id,
+        $or: [{ approvalStatus: "approved" }, { approvalStatus: { $exists: false }, isVerified: true }]
+      }).sort({ createdAt: -1, _id: -1 }).select("businessType businessCategories commissionRate").lean();
+      if (!shopkeeper.businessType && !purchaseShop) {
         throw new ApiError(400, "Your account is missing a business type");
       }
       const isRegisteredCategory = shopkeeper.businessCategories?.includes(category) || await Shop.exists({ owner: shopkeeper._id, businessCategories: category }) || !shopkeeper.businessCategories?.length && category === shopkeeper.businessType;
@@ -2144,8 +2169,8 @@ var require_purchase_controller = __commonJS({
       if (token.status !== "active") {
         throw new ApiError(400, "This token is no longer active; ask the buyer for their current token number");
       }
-      const isShop = shopkeeper.businessType === "shop";
-      const taxRate = getCompanyRate(category);
+      const isShop = (purchaseShop?.businessType || shopkeeper.businessType) === "shop";
+      const taxRate = purchaseShop ? purchaseShop.commissionRate ?? getCompanyRate(purchaseShop.businessCategories?.[0]) : shopkeeper.taxRate ?? getCompanyRate(category);
       const taxAmount = round2(amount * (taxRate / 100));
       const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
       const { leveledUp, completed, newToken } = await applyPurchase({
@@ -2308,6 +2333,7 @@ var require_purchase_validator = __commonJS({
     var { SHOPKEEPER_CATEGORIES } = require_shopkeeper_validator();
     var PURCHASE_CATEGORIES = [...SHOPKEEPER_CATEGORIES, "shop", "bike"];
     var recordPurchaseValidator = [
+      body("shopId").optional().isMongoId().withMessage("shopId must be a valid id"),
       body("category").isIn(PURCHASE_CATEGORIES).withMessage(`category must be one of ${PURCHASE_CATEGORIES.join(", ")}`),
       body("tokenNumber").trim().isLength({ min: 6, max: 6 }).withMessage("Token number must be a 6-digit code").isNumeric().withMessage("Token number must be a 6-digit code"),
       body("amount").isFloat({ gt: 0 }).withMessage("Amount must be a positive number")
@@ -2682,6 +2708,7 @@ var require_admin_controller = __commonJS({
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
     var User = require_user_model();
+    var Shop = require_shop_model();
     var Wallet = require_wallet_model();
     var Token = require_token_model();
     var Purchase = require_purchase_model();
@@ -2712,10 +2739,25 @@ var require_admin_controller = __commonJS({
         User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
         User.countDocuments(filter)
       ]);
+      let listedUsers = users;
+      if (role === "shopkeeper" && users.length > 0) {
+        const shops = await Shop.find({ owner: { $in: users.map((user) => user._id) } }).select("owner shopName").sort({ createdAt: 1 }).lean();
+        const shopsByOwner = /* @__PURE__ */ new Map();
+        for (const shop of shops) {
+          const ownerId = String(shop.owner);
+          const ownerShops = shopsByOwner.get(ownerId) || [];
+          ownerShops.push({ _id: shop._id, shopName: shop.shopName });
+          shopsByOwner.set(ownerId, ownerShops);
+        }
+        listedUsers = users.map((user) => ({
+          ...user.toObject(),
+          shops: shopsByOwner.get(String(user._id)) || []
+        }));
+      }
       res.status(200).json(
         new ApiResponse(
           200,
-          { users, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          { users: listedUsers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
           "Users fetched successfully"
         )
       );
@@ -3076,9 +3118,11 @@ var require_shopkeeper_controller = __commonJS({
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
     var Shop = require_shop_model();
+    var User = require_user_model();
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
     var { uploadImageBuffer } = require_cloudinary();
     var { notifyAdmin, notifyUser } = require_mailer();
+    var { getCompanyRate } = require_commission();
     var SHOPKEEPER_REGISTRATION_FEE = 3e3;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
@@ -3154,8 +3198,12 @@ var require_shopkeeper_controller = __commonJS({
       );
     });
     var myShops = asyncHandler(async (req, res) => {
-      const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 });
-      res.status(200).json(new ApiResponse(200, { shops }, "Your shops fetched successfully"));
+      const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
+      const shopsWithCommission = shops.map((shop) => ({
+        ...shop,
+        commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0])
+      }));
+      res.status(200).json(new ApiResponse(200, { shops: shopsWithCommission }, "Your shops fetched successfully"));
     });
     var registerShopkeeper = asyncHandler(async (req, res) => {
       const user = req.user;
@@ -3164,6 +3212,8 @@ var require_shopkeeper_controller = __commonJS({
       }
       const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
       const businessType = getBusinessType(categories[0]);
+      const commissionRate = getCompanyRate(categories[0]);
+      const isFirstShop = !await Shop.exists({ owner: user._id });
       let imageUrl = null;
       if (req.file) {
         const uploadedImage = await uploadImageBuffer(req.file.buffer, {
@@ -3192,14 +3242,15 @@ var require_shopkeeper_controller = __commonJS({
         businessDescription: description || null,
         businessImage: imageUrl,
         businessCategories: [...new Set(categories)],
+        commissionRate,
         city,
         location: { type: "Point", coordinates: [lng, lat] },
         registrationFee: SHOPKEEPER_REGISTRATION_FEE,
         approvalStatus: "pending",
         isVerified: false
       });
-      if (user.role === "shopper") {
-        user.role = "shopkeeper";
+      if (isFirstShop) {
+        if (user.role === "shopper") user.role = "shopkeeper";
         user.businessType = businessType;
         user.shopName = shopName;
         user.phoneNumber = phoneNumber;
@@ -3207,6 +3258,7 @@ var require_shopkeeper_controller = __commonJS({
         user.businessDescription = description || null;
         user.businessImage = imageUrl;
         user.businessCategories = [...new Set(categories)];
+        user.taxRate = commissionRate;
         user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
         user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
         await user.save();
@@ -3248,12 +3300,28 @@ var require_shopkeeper_controller = __commonJS({
       if (categories !== void 0) {
         shop.businessCategories = [...new Set(categories)];
         shop.businessType = getBusinessType(categories[0]);
+        shop.commissionRate = getCompanyRate(categories[0]);
       }
       if (city !== void 0) shop.city = city;
       if (lat !== void 0 && lng !== void 0) {
         shop.location = { type: "Point", coordinates: [lng, lat] };
       }
       await shop.save();
+      if (categories !== void 0) {
+        const primaryShop = await Shop.findOne({ owner: shop.owner }).sort({ createdAt: 1, _id: 1 }).select("_id").lean();
+        if (primaryShop && String(primaryShop._id) === String(shop._id)) {
+          await User.updateOne(
+            { _id: shop.owner },
+            {
+              $set: {
+                businessType: shop.businessType,
+                businessCategories: shop.businessCategories,
+                taxRate: shop.commissionRate
+              }
+            }
+          );
+        }
+      }
       res.status(200).json(new ApiResponse(200, { shop }, "Shop updated successfully"));
     });
     var deleteShop = asyncHandler(async (req, res) => {

@@ -8,7 +8,6 @@ const COMPANY_RATES = {
   petrol_diesel: 0.5,
   car: 1,
   motorcycle_scooty: 1,
-  bike: 1,
   property: 1,
   crop: 2.5,
   self_service_saving: 2.5,

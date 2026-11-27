@@ -13,6 +13,7 @@ const mongoose = require('mongoose');
 const connectDB = require('../config/db');
 const User = require('../models/user.model');
 const Shop = require('../models/shop.model');
+const { getCompanyRate } = require('../utils/commission');
 
 const run = async () => {
   await connectDB();
@@ -28,6 +29,7 @@ const run = async () => {
       continue;
     }
 
+    const commissionRate = getCompanyRate(user.businessCategories?.[0]);
     await Shop.create({
       owner: user._id,
       businessType: user.businessType || 'shop',
@@ -37,9 +39,12 @@ const run = async () => {
       businessDescription: user.businessDescription,
       businessImage: user.businessImage,
       businessCategories: user.businessCategories || [],
+      commissionRate,
       registrationFee: user.shopkeeperRegistrationFee || 0,
       createdAt: user.shopkeeperRegisteredAt || user.createdAt,
     });
+    user.taxRate = commissionRate;
+    await user.save();
     created += 1;
   }
 

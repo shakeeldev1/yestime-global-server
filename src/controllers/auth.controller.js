@@ -3,6 +3,8 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const User = require('../models/user.model');
+const Shop = require('../models/shop.model');
+const { getCompanyRate } = require('../utils/commission');
 const env = require('../config/env');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { generateOtp, hashOtp, compareOtp, getOtpExpiry } = require('../utils/otp');
@@ -187,7 +189,16 @@ const refreshToken = asyncHandler(async (req, res) => {
 
 // GET /api/auth/me
 const myProfile = asyncHandler(async (req, res) => {
-  res.status(200).json(new ApiResponse(200, { user: req.user }, 'Profile fetched successfully'));
+  const primaryShop = await Shop.findOne({ owner: req.user._id })
+    .sort({ createdAt: 1, _id: 1 })
+    .select('commissionRate businessCategories')
+    .lean();
+  const user = req.user.toObject();
+  if (primaryShop) {
+    user.taxRate = primaryShop.commissionRate ?? getCompanyRate(primaryShop.businessCategories?.[0]);
+  }
+
+  res.status(200).json(new ApiResponse(200, { user }, 'Profile fetched successfully'));
 });
 
 // PATCH /api/auth/me
