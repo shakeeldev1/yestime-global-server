@@ -302,11 +302,9 @@ Same field names/limits as registration (section 2), minus `categories` also bei
 
 ---
 
-## 6. Delete a shop
+## 6. Request shop deletion
 
-Owner-only. Permanently removes the shop from the directory. **The Rs 3000 registration fee is not refunded.**
-
-This is a `POST`, not a `DELETE` — same behavior, just a different HTTP method so any client/proxy that has trouble sending `DELETE` still works. `shopId` goes in the request body, not the URL.
+Owner-only. This submits a deletion request for admin review; it does not immediately remove the shop. The Rs 3000 registration fee is not refunded if the request is approved.
 
 ```
 POST /api/shopkeepers/delete
@@ -319,23 +317,34 @@ Content-Type: application/json
 | Field | Type | Required |
 |---|---|---|
 | `shopId` | string (Mongo id) | yes |
+| `reason` | string | no, max 500 characters |
 
 ```json
 {
-  "shopId": "66f1a2b3c4d5e6f7a8b9c0d1"
+  "shopId": "66f1a2b3c4d5e6f7a8b9c0d1",
+  "reason": "The shop has permanently closed"
 }
 ```
 
-### Success response — `200 OK`
+### Success response — `201 Created`
 
 ```json
 {
-  "statusCode": 200,
-  "data": null,
-  "message": "Shop deleted successfully",
+  "statusCode": 201,
+  "data": {
+    "request": {
+      "_id": "66f2a2b3c4d5e6f7a8b9c0d2",
+      "shopId": "66f1a2b3c4d5e6f7a8b9c0d1",
+      "status": "pending",
+      "reason": "The shop has permanently closed"
+    }
+  },
+  "message": "Shop deletion request submitted successfully",
   "success": true
 }
 ```
+
+The latest deletion request for each shop is included as `deletionRequest` in `GET /api/shopkeepers/mine`. It contains the request status, reason, submitted time, and any admin response.
 
 ### Error responses
 
@@ -343,11 +352,51 @@ Content-Type: application/json
 |---|---|
 | `404` | Shop not found |
 | `403` | `"You do not own this shop"` — trying to delete someone else's shop |
+| `409` | A deletion request is already pending for this shop |
 | `422` | `shopId` is not a valid id |
 
 ---
 
-## 7. Token activation
+## 7. Admin review of shop deletion requests
+
+All endpoints below require an authenticated admin account.
+
+### List requests
+
+```
+GET /api/admin/shop-deletion-requests?status=pending&page=1&limit=20
+```
+
+`status` can be `pending`, `approved`, `rejected`, or `all`. Optional `search` matches the shop name or owner name/email. Each result includes a snapshot of shop and owner details, so the review record remains available after approval deletes the shop.
+
+### Approve a request
+
+```
+POST /api/admin/shop-deletion-requests/:requestId/approve
+```
+
+Approving atomically removes the shop and marks the request approved. The request snapshot is retained for audit history.
+
+### Reject a request
+
+```
+POST /api/admin/shop-deletion-requests/:requestId/reject
+Content-Type: application/json
+```
+
+Optional body:
+
+```json
+{
+  "reason": "Please resolve the outstanding review first"
+}
+```
+
+A rejected request leaves the shop in place. The shopkeeper may submit another request.
+
+---
+
+## 8. Token activation
 
 ```
 POST /api/tokens/activate

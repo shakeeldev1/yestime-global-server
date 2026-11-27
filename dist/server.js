@@ -772,12 +772,15 @@ var require_shopkeeper_validator = __commonJS({
       body("lat").optional().isFloat({ min: -90, max: 90 }).withMessage("lat must be between -90 and 90").toFloat(),
       body("lng").optional().isFloat({ min: -180, max: 180 }).withMessage("lng must be between -180 and 180").toFloat()
     ];
-    var shopDeleteValidator = [body("shopId").isMongoId().withMessage("shopId must be a valid id")];
+    var shopDeletionRequestValidator = [
+      body("shopId").isMongoId().withMessage("shopId must be a valid id"),
+      body("reason").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("reason must be at most 500 characters")
+    ];
     module2.exports = {
       shopkeeperRegistrationValidator,
       shopkeeperDirectoryValidator,
       shopUpdateValidator,
-      shopDeleteValidator,
+      shopDeletionRequestValidator,
       SHOPKEEPER_CATEGORIES
     };
   }
@@ -3018,6 +3021,227 @@ var require_shopAdmin_controller = __commonJS({
   }
 });
 
+// src/models/shopDeletionRequest.model.js
+var require_shopDeletionRequest_model = __commonJS({
+  "src/models/shopDeletionRequest.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var shopDeletionRequestSchema = new mongoose.Schema(
+      {
+        shopId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true
+        },
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        ownerSnapshot: {
+          name: { type: String, required: true },
+          email: { type: String, required: true }
+        },
+        shopSnapshot: {
+          shopName: { type: String, required: true },
+          businessType: { type: String, required: true },
+          phoneNumber: { type: String, default: null },
+          businessAddress: { type: String, required: true },
+          businessDescription: { type: String, default: null },
+          businessImage: { type: String, default: null },
+          businessCategories: { type: [String], default: [] },
+          city: { type: String, default: null },
+          commissionRate: { type: Number, default: 2.5 }
+        },
+        reason: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+          default: null
+        },
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          index: true
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        reviewNote: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+          default: null
+        }
+      },
+      { timestamps: true }
+    );
+    shopDeletionRequestSchema.index(
+      { shopId: 1 },
+      { unique: true, partialFilterExpression: { status: "pending" } }
+    );
+    shopDeletionRequestSchema.index({ status: 1, createdAt: -1 });
+    module2.exports = mongoose.model("ShopDeletionRequest", shopDeletionRequestSchema);
+  }
+});
+
+// src/controllers/shopDeletion.controller.js
+var require_shopDeletion_controller = __commonJS({
+  "src/controllers/shopDeletion.controller.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var Shop = require_shop_model();
+    var ShopDeletionRequest = require_shopDeletionRequest_model();
+    var { notifyUser } = require_mailer();
+    var paginate = (query) => {
+      const page = Math.max(Number(query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+      return { page, limit, skip: (page - 1) * limit };
+    };
+    var escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var requestShopDeletion = asyncHandler(async (req, res) => {
+      const shop = await Shop.findById(req.body.shopId);
+      if (!shop) throw new ApiError(404, "Shop not found");
+      if (!shop.owner.equals(req.user._id)) {
+        throw new ApiError(403, "You do not own this shop");
+      }
+      const existingRequest = await ShopDeletionRequest.findOne({ shopId: shop._id, status: "pending" });
+      if (existingRequest) {
+        throw new ApiError(409, "A deletion request is already pending for this shop");
+      }
+      let deletionRequest;
+      try {
+        deletionRequest = await ShopDeletionRequest.create({
+          shopId: shop._id,
+          owner: req.user._id,
+          ownerSnapshot: { name: req.user.name, email: req.user.email },
+          shopSnapshot: {
+            shopName: shop.shopName,
+            businessType: shop.businessType,
+            phoneNumber: shop.phoneNumber,
+            businessAddress: shop.businessAddress,
+            businessDescription: shop.businessDescription,
+            businessImage: shop.businessImage,
+            businessCategories: shop.businessCategories,
+            city: shop.city,
+            commissionRate: shop.commissionRate
+          },
+          reason: req.body.reason || null
+        });
+      } catch (error) {
+        if (error.code === 11e3) {
+          throw new ApiError(409, "A deletion request is already pending for this shop");
+        }
+        throw error;
+      }
+      res.status(201).json(
+        new ApiResponse(201, { request: deletionRequest }, "Shop deletion request submitted successfully")
+      );
+    });
+    var listShopDeletionRequests = asyncHandler(async (req, res) => {
+      const { status, search } = req.query;
+      const { page, limit, skip } = paginate(req.query);
+      const filter = {};
+      if (status && status !== "all") filter.status = status;
+      if (search) {
+        const searchRegex = new RegExp(escapeRegex(search.trim()), "i");
+        filter.$or = [
+          { "shopSnapshot.shopName": searchRegex },
+          { "ownerSnapshot.name": searchRegex },
+          { "ownerSnapshot.email": searchRegex }
+        ];
+      }
+      const [requests, total] = await Promise.all([
+        ShopDeletionRequest.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).populate({ path: "reviewedBy", select: "name email" }),
+        ShopDeletionRequest.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { requests, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Shop deletion requests fetched successfully"
+        )
+      );
+    });
+    var approveShopDeletionRequest = asyncHandler(async (req, res) => {
+      const session = await mongoose.startSession();
+      let deletionRequest;
+      try {
+        await session.withTransaction(async () => {
+          deletionRequest = await ShopDeletionRequest.findById(req.params.requestId).session(session);
+          if (!deletionRequest) throw new ApiError(404, "Shop deletion request not found");
+          if (deletionRequest.status !== "pending") {
+            throw new ApiError(400, `This request is already ${deletionRequest.status}`);
+          }
+          const deletedShop = await Shop.findOneAndDelete(
+            { _id: deletionRequest.shopId, owner: deletionRequest.owner },
+            { session }
+          );
+          if (!deletedShop) {
+            throw new ApiError(409, "The requested shop no longer exists");
+          }
+          deletionRequest.status = "approved";
+          deletionRequest.reviewedBy = req.user._id;
+          deletionRequest.reviewedAt = /* @__PURE__ */ new Date();
+          deletionRequest.reviewNote = null;
+          await deletionRequest.save({ session });
+        });
+      } finally {
+        await session.endSession();
+      }
+      notifyUser({
+        to: deletionRequest.ownerSnapshot.email,
+        subject: `Shop deletion approved: ${deletionRequest.shopSnapshot.shopName}`,
+        html: `<p>Hi ${deletionRequest.ownerSnapshot.name},</p><p>Your request to delete <strong>${deletionRequest.shopSnapshot.shopName}</strong> was approved. The shop has been removed.</p>`
+      }).catch((error) => console.error("Failed to send shop deletion approval email:", error.message));
+      res.status(200).json(
+        new ApiResponse(200, { request: deletionRequest }, "Shop deletion approved and shop removed")
+      );
+    });
+    var rejectShopDeletionRequest = asyncHandler(async (req, res) => {
+      const deletionRequest = await ShopDeletionRequest.findOneAndUpdate(
+        { _id: req.params.requestId, status: "pending" },
+        {
+          $set: {
+            status: "rejected",
+            reviewedBy: req.user._id,
+            reviewedAt: /* @__PURE__ */ new Date(),
+            reviewNote: req.body.reason || null
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (!deletionRequest) {
+        const existingRequest = await ShopDeletionRequest.findById(req.params.requestId);
+        if (!existingRequest) throw new ApiError(404, "Shop deletion request not found");
+        throw new ApiError(400, `This request is already ${existingRequest.status}`);
+      }
+      notifyUser({
+        to: deletionRequest.ownerSnapshot.email,
+        subject: `Shop deletion request declined: ${deletionRequest.shopSnapshot.shopName}`,
+        html: `<p>Hi ${deletionRequest.ownerSnapshot.name},</p><p>Your request to delete <strong>${deletionRequest.shopSnapshot.shopName}</strong> was not approved.</p><p><strong>Reason:</strong> ${deletionRequest.reviewNote || "Please contact support for more information."}</p>`
+      }).catch((error) => console.error("Failed to send shop deletion rejection email:", error.message));
+      res.status(200).json(
+        new ApiResponse(200, { request: deletionRequest }, "Shop deletion request rejected")
+      );
+    });
+    module2.exports = {
+      requestShopDeletion,
+      listShopDeletionRequests,
+      approveShopDeletionRequest,
+      rejectShopDeletionRequest
+    };
+  }
+});
+
 // src/validators/admin.validator.js
 var require_admin_validator = __commonJS({
   "src/validators/admin.validator.js"(exports2, module2) {
@@ -3074,13 +3298,18 @@ var require_admin_routes = __commonJS({
     } = require_payment_controller();
     var { listShops, getShop, approveShop, rejectShop } = require_shopAdmin_controller();
     var {
+      listShopDeletionRequests,
+      approveShopDeletionRequest,
+      rejectShopDeletionRequest
+    } = require_shopDeletion_controller();
+    var {
       listUsersValidator,
       createUserValidator,
       updateUserValidator,
       creditWalletValidator
     } = require_admin_validator();
     var { rejectPaymentValidator } = require_wallet_validator();
-    var { body } = require("express-validator");
+    var { body, param, query } = require("express-validator");
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
     var router = express.Router();
@@ -3107,6 +3336,32 @@ var require_admin_routes = __commonJS({
       validate,
       rejectShop
     );
+    router.get(
+      "/shop-deletion-requests",
+      [
+        query("status").optional().isIn(["pending", "approved", "rejected", "all"]).withMessage("Invalid request status"),
+        query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
+        query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+        query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+      ],
+      validate,
+      listShopDeletionRequests
+    );
+    router.post(
+      "/shop-deletion-requests/:requestId/approve",
+      [param("requestId").isMongoId().withMessage("requestId must be a valid id")],
+      validate,
+      approveShopDeletionRequest
+    );
+    router.post(
+      "/shop-deletion-requests/:requestId/reject",
+      [
+        param("requestId").isMongoId().withMessage("requestId must be a valid id"),
+        body("reason").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("reason must be at most 500 characters")
+      ],
+      validate,
+      rejectShopDeletionRequest
+    );
     module2.exports = router;
   }
 });
@@ -3118,6 +3373,7 @@ var require_shopkeeper_controller = __commonJS({
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
     var Shop = require_shop_model();
+    var ShopDeletionRequest = require_shopDeletionRequest_model();
     var User = require_user_model();
     var { debitWallet, creditCompanyWallet, getOrCreateWallet } = require_wallet_service();
     var { uploadImageBuffer } = require_cloudinary();
@@ -3198,11 +3454,30 @@ var require_shopkeeper_controller = __commonJS({
       );
     });
     var myShops = asyncHandler(async (req, res) => {
-      const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
-      const shopsWithCommission = shops.map((shop) => ({
-        ...shop,
-        commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0])
-      }));
+      const [shops, deletionRequests] = await Promise.all([
+        Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean(),
+        ShopDeletionRequest.find({ owner: req.user._id }).sort({ createdAt: -1 }).select("shopId status reason createdAt reviewedAt reviewNote").lean()
+      ]);
+      const latestRequestByShop = /* @__PURE__ */ new Map();
+      for (const request of deletionRequests) {
+        const shopId = String(request.shopId);
+        if (!latestRequestByShop.has(shopId)) latestRequestByShop.set(shopId, request);
+      }
+      const shopsWithCommission = shops.map((shop) => {
+        const deletionRequest = latestRequestByShop.get(String(shop._id));
+        return {
+          ...shop,
+          commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0]),
+          deletionRequest: deletionRequest ? {
+            _id: deletionRequest._id,
+            status: deletionRequest.status,
+            reason: deletionRequest.reason,
+            requestedAt: deletionRequest.createdAt,
+            reviewedAt: deletionRequest.reviewedAt,
+            reviewNote: deletionRequest.reviewNote
+          } : null
+        };
+      });
       res.status(200).json(new ApiResponse(200, { shops: shopsWithCommission }, "Your shops fetched successfully"));
     });
     var registerShopkeeper = asyncHandler(async (req, res) => {
@@ -3324,18 +3599,7 @@ var require_shopkeeper_controller = __commonJS({
       }
       res.status(200).json(new ApiResponse(200, { shop }, "Shop updated successfully"));
     });
-    var deleteShop = asyncHandler(async (req, res) => {
-      const shop = await Shop.findById(req.body.shopId);
-      if (!shop) {
-        throw new ApiError(404, "Shop not found");
-      }
-      if (!shop.owner.equals(req.user._id)) {
-        throw new ApiError(403, "You do not own this shop");
-      }
-      await shop.deleteOne();
-      res.status(200).json(new ApiResponse(200, null, "Shop deleted successfully"));
-    });
-    module2.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop, deleteShop };
+    module2.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop };
   }
 });
 
@@ -3365,14 +3629,14 @@ var require_shopkeeper_routes = __commonJS({
       registerShopkeeper,
       listShopkeepers,
       myShops,
-      updateShop,
-      deleteShop
+      updateShop
     } = require_shopkeeper_controller();
+    var { requestShopDeletion } = require_shopDeletion_controller();
     var {
       shopkeeperRegistrationValidator,
       shopkeeperDirectoryValidator,
       shopUpdateValidator,
-      shopDeleteValidator
+      shopDeletionRequestValidator
     } = require_shopkeeper_validator();
     var validate = require_validate_middleware();
     var { authenticate } = require_auth_middleware();
@@ -3382,7 +3646,7 @@ var require_shopkeeper_routes = __commonJS({
     router.get("/mine", authenticate, myShops);
     router.post("/register", authenticate, uploadShopImage.single("image"), shopkeeperRegistrationValidator, validate, registerShopkeeper);
     router.patch("/:shopId", authenticate, uploadShopImage.single("image"), shopUpdateValidator, validate, updateShop);
-    router.post("/delete", authenticate, shopDeleteValidator, validate, deleteShop);
+    router.post("/delete", authenticate, shopDeletionRequestValidator, validate, requestShopDeletion);
     module2.exports = router;
   }
 });

@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const Shop = require('../models/shop.model');
+const ShopDeletionRequest = require('../models/shopDeletionRequest.model');
 const User = require('../models/user.model');
 const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../services/wallet.service');
 const { uploadImageBuffer } = require('../lib/cloudinary');
@@ -106,11 +107,35 @@ const listShopkeepers = asyncHandler(async (req, res) => {
 
 // GET /api/shopkeepers/mine (authenticated) — the current user's own shops
 const myShops = asyncHandler(async (req, res) => {
-  const shops = await Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean();
-  const shopsWithCommission = shops.map((shop) => ({
-    ...shop,
-    commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0]),
-  }));
+  const [shops, deletionRequests] = await Promise.all([
+    Shop.find({ owner: req.user._id }).sort({ createdAt: -1 }).lean(),
+    ShopDeletionRequest.find({ owner: req.user._id })
+      .sort({ createdAt: -1 })
+      .select('shopId status reason createdAt reviewedAt reviewNote')
+      .lean(),
+  ]);
+  const latestRequestByShop = new Map();
+  for (const request of deletionRequests) {
+    const shopId = String(request.shopId);
+    if (!latestRequestByShop.has(shopId)) latestRequestByShop.set(shopId, request);
+  }
+  const shopsWithCommission = shops.map((shop) => {
+    const deletionRequest = latestRequestByShop.get(String(shop._id));
+    return {
+      ...shop,
+      commissionRate: shop.commissionRate ?? getCompanyRate(shop.businessCategories?.[0]),
+      deletionRequest: deletionRequest
+        ? {
+            _id: deletionRequest._id,
+            status: deletionRequest.status,
+            reason: deletionRequest.reason,
+            requestedAt: deletionRequest.createdAt,
+            reviewedAt: deletionRequest.reviewedAt,
+            reviewNote: deletionRequest.reviewNote,
+          }
+        : null,
+    };
+  });
   res.status(200).json(new ApiResponse(200, { shops: shopsWithCommission }, 'Your shops fetched successfully'));
 });
 
@@ -260,20 +285,4 @@ const updateShop = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { shop }, 'Shop updated successfully'));
 });
 
-// POST /api/shopkeepers/delete (authenticated, owner only)
-// The Rs 3000 registration fee is not refunded.
-const deleteShop = asyncHandler(async (req, res) => {
-  const shop = await Shop.findById(req.body.shopId);
-  if (!shop) {
-    throw new ApiError(404, 'Shop not found');
-  }
-  if (!shop.owner.equals(req.user._id)) {
-    throw new ApiError(403, 'You do not own this shop');
-  }
-
-  await shop.deleteOne();
-
-  res.status(200).json(new ApiResponse(200, null, 'Shop deleted successfully'));
-});
-
-module.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop, deleteShop };
+module.exports = { registerShopkeeper, listShopkeepers, myShops, updateShop };

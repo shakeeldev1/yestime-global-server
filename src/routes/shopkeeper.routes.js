@@ -4,13 +4,13 @@ const {
 	listShopkeepers,
 	myShops,
 	updateShop,
-	deleteShop,
 } = require('../controllers/shopkeeper.controller');
+const { requestShopDeletion } = require('../controllers/shopDeletion.controller');
 const {
 	shopkeeperRegistrationValidator,
 	shopkeeperDirectoryValidator,
 	shopUpdateValidator,
-	shopDeleteValidator,
+	shopDeletionRequestValidator,
 } = require('../validators/shopkeeper.validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate } = require('../middlewares/auth.middleware');
@@ -22,6 +22,6 @@ router.get('/', shopkeeperDirectoryValidator, validate, listShopkeepers);
 router.get('/mine', authenticate, myShops);
 router.post('/register', authenticate, uploadShopImage.single('image'), shopkeeperRegistrationValidator, validate, registerShopkeeper);
 router.patch('/:shopId', authenticate, uploadShopImage.single('image'), shopUpdateValidator, validate, updateShop);
-router.post('/delete', authenticate, shopDeleteValidator, validate, deleteShop);
+router.post('/delete', authenticate, shopDeletionRequestValidator, validate, requestShopDeletion);
 
 module.exports = router;

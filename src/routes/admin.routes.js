@@ -18,13 +18,18 @@ const {
 } = require('../controllers/payment.controller');
 const { listShops, getShop, approveShop, rejectShop } = require('../controllers/shopAdmin.controller');
 const {
+  listShopDeletionRequests,
+  approveShopDeletionRequest,
+  rejectShopDeletionRequest,
+} = require('../controllers/shopDeletion.controller');
+const {
   listUsersValidator,
   createUserValidator,
   updateUserValidator,
   creditWalletValidator,
 } = require('../validators/admin.validator');
 const { rejectPaymentValidator } = require('../validators/wallet.validator');
-const { body } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
 
@@ -54,6 +59,32 @@ router.post(
   [body('reason').optional({ values: 'null' }).trim().isLength({ max: 500 }).withMessage('reason must be at most 500 characters')],
   validate,
   rejectShop
+);
+router.get(
+  '/shop-deletion-requests',
+  [
+    query('status').optional().isIn(['pending', 'approved', 'rejected', 'all']).withMessage('Invalid request status'),
+    query('search').optional().trim().isLength({ min: 1, max: 100 }).withMessage('search must be 1 to 100 characters'),
+    query('page').optional().isInt({ min: 1 }).withMessage('page must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+  ],
+  validate,
+  listShopDeletionRequests
+);
+router.post(
+  '/shop-deletion-requests/:requestId/approve',
+  [param('requestId').isMongoId().withMessage('requestId must be a valid id')],
+  validate,
+  approveShopDeletionRequest
+);
+router.post(
+  '/shop-deletion-requests/:requestId/reject',
+  [
+    param('requestId').isMongoId().withMessage('requestId must be a valid id'),
+    body('reason').optional({ values: 'null' }).trim().isLength({ max: 500 }).withMessage('reason must be at most 500 characters'),
+  ],
+  validate,
+  rejectShopDeletionRequest
 );
 
 module.exports = router;

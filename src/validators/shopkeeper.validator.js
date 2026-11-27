@@ -107,12 +107,15 @@ const shopUpdateValidator = [
   body('lng').optional().isFloat({ min: -180, max: 180 }).withMessage('lng must be between -180 and 180').toFloat(),
 ];
 
-const shopDeleteValidator = [body('shopId').isMongoId().withMessage('shopId must be a valid id')];
+const shopDeletionRequestValidator = [
+  body('shopId').isMongoId().withMessage('shopId must be a valid id'),
+  body('reason').optional({ values: 'null' }).trim().isLength({ max: 500 }).withMessage('reason must be at most 500 characters'),
+];
 
 module.exports = {
   shopkeeperRegistrationValidator,
   shopkeeperDirectoryValidator,
   shopUpdateValidator,
-  shopDeleteValidator,
+  shopDeletionRequestValidator,
   SHOPKEEPER_CATEGORIES,
 };
