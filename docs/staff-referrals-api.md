@@ -18,9 +18,9 @@ All staff routes require an access token for a user with the `staff` role.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/staff/dashboard` | Staff identity, referral code, commission rules, balances, revenue and referral totals |
-| `GET` | `/api/staff/referrals?page=1&limit=20` | Paginated referred-member profiles, shops and rewards |
-| `GET` | `/api/staff/earnings?page=1&limit=20` | Paginated commission history and qualifying revenue totals |
-| `GET` | `/api/staff/payouts?page=1&limit=20` | Paginated payment request history |
+| `GET` | `/api/staff/referrals?page=1&limit=20&search=&role=&isVerified=` | Paginated referred-member profiles, shops and rewards with search and filters |
+| `GET` | `/api/staff/earnings?page=1&limit=20&search=&memberType=&trigger=` | Paginated commission history with search and event filters |
+| `GET` | `/api/staff/payouts?page=1&limit=20&status=&search=` | Paginated payment request history with search and status filter |
 | `POST` | `/api/staff/payouts` | Request payment from the available commission balance |
 
 Payment request body:
@@ -44,11 +44,11 @@ All admin endpoints below require an authenticated `admin` account.
 |---|---|---|
 | `GET` | `/api/admin/referral-settings` | Read global default rules |
 | `PATCH` | `/api/admin/referral-settings` | Set global default shopper and shopkeeper rules |
-| `GET` | `/api/admin/staff?search=&page=1&limit=20` | Search and paginate staff with balance and referral totals |
+| `GET` | `/api/admin/staff?search=&page=1&limit=20&isBlocked=&passwordSetupRequired=&isVerified=` | Search, filter and paginate staff with balance and referral totals |
 | `POST` | `/api/admin/staff` | Create a verified staff account, generate a referral code, and email a password-setup OTP/link |
 | `GET` | `/api/admin/staff/:staffId` | Staff profile, summary, paginated referrals, commission rewards, payouts and ledger |
 | `PATCH` | `/api/admin/staff/:staffId` | Change staff profile, block status, commission rules or global-rule assignment |
-| `GET` | `/api/admin/staff-payouts?status=pending&page=1&limit=20` | Review payment requests across all staff |
+| `GET` | `/api/admin/staff-payouts?status=pending&page=1&limit=20&search=` | Review and search payment requests across all staff |
 | `POST` | `/api/admin/staff-payouts/:payoutId/process` | Complete or reject a pending payment request |
 
 Rule values use this shape:

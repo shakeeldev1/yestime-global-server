@@ -3562,6 +3562,13 @@ var require_shopDeletion_controller = __commonJS({
         )
       );
     });
+    var getShopDeletionRequest = asyncHandler(async (req, res) => {
+      const deletionRequest = await ShopDeletionRequest.findById(req.params.requestId).populate({ path: "reviewedBy", select: "name email" });
+      if (!deletionRequest) throw new ApiError(404, "Shop deletion request not found");
+      res.status(200).json(
+        new ApiResponse(200, { request: deletionRequest }, "Shop deletion request fetched successfully")
+      );
+    });
     var approveShopDeletionRequest = asyncHandler(async (req, res) => {
       const session = await mongoose.startSession();
       let deletionRequest;
@@ -3627,6 +3634,7 @@ var require_shopDeletion_controller = __commonJS({
     module2.exports = {
       requestShopDeletion,
       listShopDeletionRequests,
+      getShopDeletionRequest,
       approveShopDeletionRequest,
       rejectShopDeletionRequest
     };
@@ -3744,6 +3752,7 @@ var require_adminReferral_controller = __commonJS({
       const limit = Math.min(Math.max(Number(query[`${prefix}limit`] || query.limit) || 20, 1), 100);
       return { page, limit, skip: (page - 1) * limit };
     };
+    var escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var createReferralCode = async () => {
       let code;
       do {
@@ -3754,14 +3763,16 @@ var require_adminReferral_controller = __commonJS({
     var listStaff = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
       const filter = { role: "staff" };
-      if (req.query.search) {
-        filter.$or = [
-          { name: { $regex: req.query.search, $options: "i" } },
-          { email: { $regex: req.query.search, $options: "i" } },
-          { staffReferralCode: { $regex: req.query.search, $options: "i" } }
-        ];
+      const searchTerm = String(req.query.search || "").trim();
+      if (searchTerm) {
+        const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
+        filter.$or = [{ name: searchRegex }, { email: searchRegex }, { staffReferralCode: searchRegex }];
       }
       if (req.query.isBlocked !== void 0) filter.isBlocked = req.query.isBlocked === "true";
+      if (req.query.passwordSetupRequired !== void 0) {
+        filter.passwordSetupRequired = req.query.passwordSetupRequired === "true" ? true : { $ne: true };
+      }
+      if (req.query.isVerified !== void 0) filter.isVerified = req.query.isVerified === "true";
       const [staffMembers, total] = await Promise.all([
         User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules passwordSetupRequired isVerified isBlocked createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         User.countDocuments(filter)
@@ -4005,6 +4016,19 @@ var require_adminReferral_controller = __commonJS({
       const filter = {};
       if (req.query.status && req.query.status !== "all") filter.status = req.query.status;
       if (req.params.staffId) filter.staff = req.params.staffId;
+      const searchTerm = String(req.query.search || "").trim();
+      if (searchTerm) {
+        const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
+        const matchingStaff = await User.find({
+          role: "staff",
+          $or: [{ name: searchRegex }, { email: searchRegex }, { staffReferralCode: searchRegex }]
+        }).distinct("_id");
+        filter.$or = [
+          { staff: { $in: matchingStaff } },
+          { method: searchRegex },
+          { accountDetails: searchRegex }
+        ];
+      }
       const [payouts, total] = await Promise.all([
         StaffPayoutRequest.find(filter).populate({ path: "staff", select: "name email staffReferralCode" }).populate({ path: "processedBy", select: "name email" }).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         StaffPayoutRequest.countDocuments(filter)
@@ -4180,6 +4204,7 @@ var require_admin_routes = __commonJS({
     var { listShops, getShop, approveShop, rejectShop } = require_shopAdmin_controller();
     var {
       listShopDeletionRequests,
+      getShopDeletionRequest,
       approveShopDeletionRequest,
       rejectShopDeletionRequest
     } = require_shopDeletion_controller();
@@ -4255,6 +4280,12 @@ var require_admin_routes = __commonJS({
       ],
       validate,
       listShopDeletionRequests
+    );
+    router.get(
+      "/shop-deletion-requests/:requestId",
+      [param("requestId").isMongoId().withMessage("requestId must be a valid id")],
+      validate,
+      getShopDeletionRequest
     );
     router.post(
       "/shop-deletion-requests/:requestId/approve",
@@ -4608,6 +4639,7 @@ var require_staff_controller = __commonJS({
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
       return { page, limit, skip: (page - 1) * limit };
     };
+    var escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var getDashboard = asyncHandler(async (req, res) => {
       const staffId = req.user._id;
       const [wallet, referralCount, rewardTotals, pendingPayouts, settings] = await Promise.all([
@@ -4664,6 +4696,15 @@ var require_staff_controller = __commonJS({
     var listReferrals = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
       const filter = { referredByStaff: req.user._id };
+      if (req.query.role === "shopper" || req.query.role === "shopkeeper") filter.role = req.query.role;
+      if (req.query.isVerified === "true" || req.query.isVerified === "false") {
+        filter.isVerified = req.query.isVerified === "true";
+      }
+      const searchTerm = String(req.query.search || "").trim();
+      if (searchTerm) {
+        const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
+        filter.$or = [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }];
+      }
       const [members, total] = await Promise.all([
         User.find(filter).select("name email role phoneNumber isVerified hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         User.countDocuments(filter)
@@ -4705,6 +4746,12 @@ var require_staff_controller = __commonJS({
     var listPayouts = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
       const filter = { staff: req.user._id };
+      if (["pending", "completed", "rejected"].includes(req.query.status)) filter.status = req.query.status;
+      const searchTerm = String(req.query.search || "").trim();
+      if (searchTerm) {
+        const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
+        filter.$or = [{ method: searchRegex }, { accountDetails: searchRegex }];
+      }
       const [payouts, total] = await Promise.all([
         StaffPayoutRequest.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         StaffPayoutRequest.countDocuments(filter)
@@ -4720,6 +4767,20 @@ var require_staff_controller = __commonJS({
     var listEarnings = asyncHandler(async (req, res) => {
       const { page, limit, skip } = paginate(req.query);
       const filter = { staff: req.user._id };
+      if (req.query.memberType === "shopper" || req.query.memberType === "shopkeeper") {
+        filter.memberType = req.query.memberType;
+      }
+      if (req.query.trigger === "token_activation" || req.query.trigger === "shop_registration") {
+        filter.trigger = req.query.trigger;
+      }
+      const searchTerm = String(req.query.search || "").trim();
+      if (searchTerm) {
+        const searchRegex = new RegExp(escapeRegex(searchTerm), "i");
+        const members = await User.find({
+          $or: [{ name: searchRegex }, { email: searchRegex }]
+        }).select("_id").lean();
+        filter.member = { $in: members.map((member) => member._id) };
+      }
       const [earnings, total, totalsByType] = await Promise.all([
         ReferralReward.find(filter).populate({ path: "member", select: "name email role" }).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
         ReferralReward.countDocuments(filter),

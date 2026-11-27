@@ -19,6 +19,7 @@ const {
 const { listShops, getShop, approveShop, rejectShop } = require('../controllers/shopAdmin.controller');
 const {
   listShopDeletionRequests,
+  getShopDeletionRequest,
   approveShopDeletionRequest,
   rejectShopDeletionRequest,
 } = require('../controllers/shopDeletion.controller');
@@ -99,6 +100,12 @@ router.get(
   ],
   validate,
   listShopDeletionRequests
+);
+router.get(
+  '/shop-deletion-requests/:requestId',
+  [param('requestId').isMongoId().withMessage('requestId must be a valid id')],
+  validate,
+  getShopDeletionRequest
 );
 router.post(
   '/shop-deletion-requests/:requestId/approve',

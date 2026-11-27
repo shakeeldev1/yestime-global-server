@@ -369,6 +369,14 @@ GET /api/admin/shop-deletion-requests?status=pending&page=1&limit=20
 
 `status` can be `pending`, `approved`, `rejected`, or `all`. Optional `search` matches the shop name or owner name/email. Each result includes a snapshot of shop and owner details, so the review record remains available after approval deletes the shop.
 
+### Get request details
+
+```
+GET /api/admin/shop-deletion-requests/:requestId
+```
+
+Returns the saved shop/owner snapshot and review audit details for the admin detail page.
+
 ### Approve a request
 
 ```

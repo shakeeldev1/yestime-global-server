@@ -16,6 +16,8 @@ const paginate = (query) => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const getDashboard = asyncHandler(async (req, res) => {
   const staffId = req.user._id;
   const [wallet, referralCount, rewardTotals, pendingPayouts, settings] = await Promise.all([
@@ -76,6 +78,15 @@ const getDashboard = asyncHandler(async (req, res) => {
 const listReferrals = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
   const filter = { referredByStaff: req.user._id };
+  if (req.query.role === 'shopper' || req.query.role === 'shopkeeper') filter.role = req.query.role;
+  if (req.query.isVerified === 'true' || req.query.isVerified === 'false') {
+    filter.isVerified = req.query.isVerified === 'true';
+  }
+  const searchTerm = String(req.query.search || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
+    filter.$or = [{ name: searchRegex }, { email: searchRegex }, { phoneNumber: searchRegex }];
+  }
   const [members, total] = await Promise.all([
     User.find(filter)
       .select('name email role phoneNumber isVerified hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt')
@@ -126,6 +137,12 @@ const listReferrals = asyncHandler(async (req, res) => {
 const listPayouts = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
   const filter = { staff: req.user._id };
+  if (['pending', 'completed', 'rejected'].includes(req.query.status)) filter.status = req.query.status;
+  const searchTerm = String(req.query.search || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
+    filter.$or = [{ method: searchRegex }, { accountDetails: searchRegex }];
+  }
   const [payouts, total] = await Promise.all([
     StaffPayoutRequest.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
     StaffPayoutRequest.countDocuments(filter),
@@ -142,6 +159,20 @@ const listPayouts = asyncHandler(async (req, res) => {
 const listEarnings = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
   const filter = { staff: req.user._id };
+  if (req.query.memberType === 'shopper' || req.query.memberType === 'shopkeeper') {
+    filter.memberType = req.query.memberType;
+  }
+  if (req.query.trigger === 'token_activation' || req.query.trigger === 'shop_registration') {
+    filter.trigger = req.query.trigger;
+  }
+  const searchTerm = String(req.query.search || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
+    const members = await User.find({
+      $or: [{ name: searchRegex }, { email: searchRegex }],
+    }).select('_id').lean();
+    filter.member = { $in: members.map((member) => member._id) };
+  }
   const [earnings, total, totalsByType] = await Promise.all([
     ReferralReward.find(filter)
       .populate({ path: 'member', select: 'name email role' })

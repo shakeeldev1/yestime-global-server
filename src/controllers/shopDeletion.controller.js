@@ -90,6 +90,15 @@ const listShopDeletionRequests = asyncHandler(async (req, res) => {
   );
 });
 
+const getShopDeletionRequest = asyncHandler(async (req, res) => {
+  const deletionRequest = await ShopDeletionRequest.findById(req.params.requestId)
+    .populate({ path: 'reviewedBy', select: 'name email' });
+  if (!deletionRequest) throw new ApiError(404, 'Shop deletion request not found');
+  res.status(200).json(
+    new ApiResponse(200, { request: deletionRequest }, 'Shop deletion request fetched successfully')
+  );
+});
+
 const approveShopDeletionRequest = asyncHandler(async (req, res) => {
   const session = await mongoose.startSession();
   let deletionRequest;
@@ -165,6 +174,7 @@ const rejectShopDeletionRequest = asyncHandler(async (req, res) => {
 module.exports = {
   requestShopDeletion,
   listShopDeletionRequests,
+  getShopDeletionRequest,
   approveShopDeletionRequest,
   rejectShopDeletionRequest,
 };

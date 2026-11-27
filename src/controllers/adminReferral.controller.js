@@ -20,6 +20,8 @@ const paginate = (query, prefix = '') => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const createReferralCode = async () => {
   let code;
   do {
@@ -31,14 +33,16 @@ const createReferralCode = async () => {
 const listStaff = asyncHandler(async (req, res) => {
   const { page, limit, skip } = paginate(req.query);
   const filter = { role: 'staff' };
-  if (req.query.search) {
-    filter.$or = [
-      { name: { $regex: req.query.search, $options: 'i' } },
-      { email: { $regex: req.query.search, $options: 'i' } },
-      { staffReferralCode: { $regex: req.query.search, $options: 'i' } },
-    ];
+  const searchTerm = String(req.query.search || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
+    filter.$or = [{ name: searchRegex }, { email: searchRegex }, { staffReferralCode: searchRegex }];
   }
   if (req.query.isBlocked !== undefined) filter.isBlocked = req.query.isBlocked === 'true';
+  if (req.query.passwordSetupRequired !== undefined) {
+    filter.passwordSetupRequired = req.query.passwordSetupRequired === 'true' ? true : { $ne: true };
+  }
+  if (req.query.isVerified !== undefined) filter.isVerified = req.query.isVerified === 'true';
 
   const [staffMembers, total] = await Promise.all([
     User.find(filter)
@@ -315,6 +319,19 @@ const listStaffPayouts = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status && req.query.status !== 'all') filter.status = req.query.status;
   if (req.params.staffId) filter.staff = req.params.staffId;
+  const searchTerm = String(req.query.search || '').trim();
+  if (searchTerm) {
+    const searchRegex = new RegExp(escapeRegex(searchTerm), 'i');
+    const matchingStaff = await User.find({
+      role: 'staff',
+      $or: [{ name: searchRegex }, { email: searchRegex }, { staffReferralCode: searchRegex }],
+    }).distinct('_id');
+    filter.$or = [
+      { staff: { $in: matchingStaff } },
+      { method: searchRegex },
+      { accountDetails: searchRegex },
+    ];
+  }
   const [payouts, total] = await Promise.all([
     StaffPayoutRequest.find(filter)
       .populate({ path: 'staff', select: 'name email staffReferralCode' })
