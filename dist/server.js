@@ -1994,7 +1994,8 @@ var require_cloudinary = __commonJS({
   "src/lib/cloudinary.js"(exports2, module2) {
     var { v2: cloudinary } = require("cloudinary");
     var env2 = require_env();
-    if (env2.CLOUDINARY_CLOUD_NAME && env2.CLOUDINARY_API_KEY && env2.CLOUDINARY_API_SECRET) {
+    var isConfigured = Boolean(env2.CLOUDINARY_CLOUD_NAME && env2.CLOUDINARY_API_KEY && env2.CLOUDINARY_API_SECRET);
+    if (isConfigured) {
       cloudinary.config({
         cloud_name: env2.CLOUDINARY_CLOUD_NAME,
         api_key: env2.CLOUDINARY_API_KEY,
@@ -2002,7 +2003,7 @@ var require_cloudinary = __commonJS({
       });
     }
     var uploadImageBuffer = (buffer, options = {}) => {
-      if (!env2.CLOUDINARY_CLOUD_NAME || !env2.CLOUDINARY_API_KEY || !env2.CLOUDINARY_API_SECRET) {
+      if (!isConfigured) {
         const error = new Error("Cloudinary is not configured");
         error.statusCode = 503;
         throw error;
@@ -2015,7 +2016,50 @@ var require_cloudinary = __commonJS({
         stream.end(buffer);
       });
     };
-    module2.exports = { uploadImageBuffer };
+    var getCloudinaryPublicId = (imageUrl) => {
+      let url;
+      try {
+        url = new URL(imageUrl);
+      } catch {
+        return null;
+      }
+      if (url.hostname !== "res.cloudinary.com") return null;
+      const segments = url.pathname.split("/").filter(Boolean);
+      if (segments[0] !== env2.CLOUDINARY_CLOUD_NAME) return null;
+      const uploadIndex = segments.indexOf("upload");
+      if (uploadIndex < 0 || segments[uploadIndex + 1] === void 0) return null;
+      const versionIndex = segments.findIndex((segment, index) => index > uploadIndex && /^v\d+$/.test(segment));
+      if (versionIndex < 0) return null;
+      const publicIdSegments = segments.slice(versionIndex + 1);
+      if (publicIdSegments.length === 0) return null;
+      publicIdSegments[publicIdSegments.length - 1] = publicIdSegments[publicIdSegments.length - 1].replace(/\.[^.]+$/, "");
+      return publicIdSegments.join("/") || null;
+    };
+    var deleteCloudinaryImages = async (publicIds) => {
+      if (publicIds.length === 0) return;
+      if (!isConfigured) {
+        const error = new Error("Account data was permanently deleted, but linked Cloudinary images could not be removed because Cloudinary is not configured.");
+        error.statusCode = 502;
+        throw error;
+      }
+      const failures = [];
+      for (const publicId of publicIds) {
+        try {
+          const result = await cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
+          if (result.result !== "ok" && result.result !== "not found") {
+            failures.push(result.result || "Unknown Cloudinary response");
+          }
+        } catch (error) {
+          failures.push(error.message || "Unknown Cloudinary error");
+        }
+      }
+      if (failures.length > 0) {
+        const error = new Error(`Account data was permanently deleted, but ${failures.length} linked Cloudinary image(s) could not be removed: ${failures[0]}`);
+        error.statusCode = 502;
+        throw error;
+      }
+    };
+    module2.exports = { uploadImageBuffer, getCloudinaryPublicId, deleteCloudinaryImages };
   }
 });
 
@@ -3177,9 +3221,306 @@ var require_draw_routes = __commonJS({
   }
 });
 
+// src/models/shopDeletionRequest.model.js
+var require_shopDeletionRequest_model = __commonJS({
+  "src/models/shopDeletionRequest.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var shopDeletionRequestSchema = new mongoose.Schema(
+      {
+        shopId: {
+          type: mongoose.Schema.Types.ObjectId,
+          required: true
+        },
+        owner: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        ownerSnapshot: {
+          name: { type: String, required: true },
+          email: { type: String, required: true }
+        },
+        shopSnapshot: {
+          shopName: { type: String, required: true },
+          businessType: { type: String, required: true },
+          phoneNumber: { type: String, default: null },
+          businessAddress: { type: String, required: true },
+          businessDescription: { type: String, default: null },
+          businessImage: { type: String, default: null },
+          businessCategories: { type: [String], default: [] },
+          city: { type: String, default: null },
+          commissionRate: { type: Number, default: 2.5 }
+        },
+        reason: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+          default: null
+        },
+        status: {
+          type: String,
+          enum: ["pending", "approved", "rejected"],
+          default: "pending",
+          index: true
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        reviewedAt: {
+          type: Date,
+          default: null
+        },
+        reviewNote: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+          default: null
+        }
+      },
+      { timestamps: true }
+    );
+    shopDeletionRequestSchema.index(
+      { shopId: 1 },
+      { unique: true, partialFilterExpression: { status: "pending" } }
+    );
+    shopDeletionRequestSchema.index({ status: 1, createdAt: -1 });
+    module2.exports = mongoose.model("ShopDeletionRequest", shopDeletionRequestSchema);
+  }
+});
+
+// src/models/staffPayoutRequest.model.js
+var require_staffPayoutRequest_model = __commonJS({
+  "src/models/staffPayoutRequest.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var staffPayoutRequestSchema = new mongoose.Schema(
+      {
+        staff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        amount: {
+          type: Number,
+          required: true,
+          min: 0.01
+        },
+        method: {
+          type: String,
+          enum: ["jazzcash", "easypaisa", "bank"],
+          required: true
+        },
+        accountDetails: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        status: {
+          type: String,
+          enum: ["pending", "completed", "rejected"],
+          default: "pending",
+          index: true
+        },
+        processedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        processedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          trim: true,
+          default: null
+        }
+      },
+      { timestamps: true }
+    );
+    staffPayoutRequestSchema.index({ createdAt: -1 });
+    module2.exports = mongoose.model("StaffPayoutRequest", staffPayoutRequestSchema);
+  }
+});
+
+// src/services/accountDeletion.service.js
+var require_accountDeletion_service = __commonJS({
+  "src/services/accountDeletion.service.js"(exports2, module2) {
+    var ApiError = require_ApiError();
+    var Shop = require_shop_model();
+    var ShopDeletionRequest = require_shopDeletionRequest_model();
+    var Wallet = require_wallet_model();
+    var WalletTransaction = require_walletTransaction_model();
+    var Token = require_token_model();
+    var Purchase = require_purchase_model();
+    var Draw = require_draw_model();
+    var Withdrawal = require_withdrawal_model();
+    var ManualPayment = require_manualPayment_model();
+    var ReferralReward = require_referralReward_model();
+    var StaffWallet = require_staffWallet_model();
+    var StaffPayoutRequest = require_staffPayoutRequest_model();
+    var StaffLedgerEntry = require_staffLedgerEntry_model();
+    var ReferralSettings = require_referralSettings_model();
+    var User = require_user_model();
+    var { getCloudinaryPublicId, deleteCloudinaryImages } = require_cloudinary();
+    var reconcileReferralLedger = async (memberId, session) => {
+      const rewards = await ReferralReward.find({ member: memberId }).select("staff").session(session).lean();
+      const ledgerStaffIds = await StaffLedgerEntry.distinct("staff", {
+        type: "commission_earned",
+        "meta.member": memberId
+      }).session(session);
+      const staffIds = [.../* @__PURE__ */ new Set([
+        ...rewards.map((reward) => String(reward.staff)),
+        ...ledgerStaffIds.map(String)
+      ])];
+      for (const staffId of staffIds) {
+        const entries = await StaffLedgerEntry.find({ staff: staffId }).sort({ createdAt: 1, _id: 1 }).session(session);
+        const wallet = await StaffWallet.findOne({ staff: staffId }).session(session);
+        const lastEntry = entries[entries.length - 1];
+        if (!wallet || lastEntry && (Math.abs(wallet.availableBalance - lastEntry.availableBalanceAfter) > 0.01 || Math.abs(wallet.reservedBalance - lastEntry.reservedBalanceAfter) > 0.01 || Math.abs(wallet.paidBalance - lastEntry.paidBalanceAfter) > 0.01) || !lastEntry && (wallet.availableBalance > 0.01 || wallet.reservedBalance > 0.01 || wallet.paidBalance > 0.01)) {
+          throw new ApiError(409, "Referral payout history is inconsistent. Reconcile this staff ledger before permanently deleting the referred account.");
+        }
+        let availableBalance = 0;
+        let reservedBalance = 0;
+        let paidBalance = 0;
+        const firstEntry = entries[0];
+        if (firstEntry) {
+          availableBalance = firstEntry.availableBalanceAfter;
+          reservedBalance = firstEntry.reservedBalanceAfter;
+          paidBalance = firstEntry.paidBalanceAfter;
+          if (firstEntry.type === "commission_earned") availableBalance -= firstEntry.amount;
+          if (firstEntry.type === "payout_requested") {
+            availableBalance += firstEntry.amount;
+            reservedBalance -= firstEntry.amount;
+          }
+          if (firstEntry.type === "payout_rejected") {
+            availableBalance -= firstEntry.amount;
+            reservedBalance += firstEntry.amount;
+          }
+          if (firstEntry.type === "payout_completed") {
+            reservedBalance += firstEntry.amount;
+            paidBalance -= firstEntry.amount;
+          }
+        }
+        for (const entry of entries) {
+          const isDeletedMemberReward = entry.type === "commission_earned" && String(entry.meta?.member || "") === String(memberId);
+          if (isDeletedMemberReward) continue;
+          if (entry.type === "commission_earned") {
+            availableBalance += entry.amount;
+          } else if (entry.type === "payout_requested") {
+            availableBalance -= entry.amount;
+            reservedBalance += entry.amount;
+          } else if (entry.type === "payout_rejected") {
+            reservedBalance -= entry.amount;
+            availableBalance += entry.amount;
+          } else if (entry.type === "payout_completed") {
+            reservedBalance -= entry.amount;
+            paidBalance += entry.amount;
+          }
+          if (availableBalance < -0.01 || reservedBalance < -0.01 || paidBalance < -0.01) {
+            throw new ApiError(409, "Removing this member would make staff payout balances inconsistent. Reconcile the staff ledger before deleting the account.");
+          }
+          entry.availableBalanceAfter = Math.max(0, availableBalance);
+          entry.reservedBalanceAfter = Math.max(0, reservedBalance);
+          entry.paidBalanceAfter = Math.max(0, paidBalance);
+          await entry.save({ session });
+        }
+        wallet.availableBalance = Math.max(0, availableBalance);
+        wallet.reservedBalance = Math.max(0, reservedBalance);
+        wallet.paidBalance = Math.max(0, paidBalance);
+        await wallet.save({ session });
+        await StaffLedgerEntry.deleteMany({
+          staff: staffId,
+          type: "commission_earned",
+          "meta.member": memberId
+        }, { session });
+      }
+    };
+    var deleteAccountData = async (userId, session) => {
+      const user = await User.findById(userId).select("businessImage").session(session).lean();
+      const shops = await Shop.find({ owner: userId }).select("_id businessImage").session(session).lean();
+      const tokens = await Token.find({ owner: userId }).select("_id").session(session).lean();
+      const paymentProofs = await ManualPayment.find({ user: userId }).select("proofPath").session(session).lean();
+      const deletionRequestImages = await ShopDeletionRequest.find({ owner: userId }).select("shopSnapshot.businessImage").session(session).lean();
+      const imageUrls = [...new Set([
+        user?.businessImage,
+        ...shops.map((shop) => shop.businessImage),
+        ...paymentProofs.map((payment) => payment.proofPath),
+        ...deletionRequestImages.map((request) => request.shopSnapshot?.businessImage)
+      ].filter(Boolean))];
+      const sharedImageUrls = /* @__PURE__ */ new Set();
+      if (imageUrls.length > 0) {
+        const sharedUserImages = await User.distinct("businessImage", {
+          _id: { $ne: userId },
+          businessImage: { $in: imageUrls }
+        }).session(session);
+        const sharedShopImages = await Shop.distinct("businessImage", {
+          owner: { $ne: userId },
+          businessImage: { $in: imageUrls }
+        }).session(session);
+        const sharedProofs = await ManualPayment.distinct("proofPath", {
+          user: { $ne: userId },
+          proofPath: { $in: imageUrls }
+        }).session(session);
+        const sharedDeletionImages = await ShopDeletionRequest.distinct("shopSnapshot.businessImage", {
+          owner: { $ne: userId },
+          "shopSnapshot.businessImage": { $in: imageUrls }
+        }).session(session);
+        [...sharedUserImages, ...sharedShopImages, ...sharedProofs, ...sharedDeletionImages].forEach((imageUrl) => sharedImageUrls.add(imageUrl));
+      }
+      const orphanImageUrls = imageUrls.filter((imageUrl) => !sharedImageUrls.has(imageUrl));
+      const shopIds = shops.map((shop) => shop._id);
+      const tokenIds = tokens.map((token) => token._id);
+      const options = { session };
+      await reconcileReferralLedger(userId, session);
+      await Purchase.deleteMany({
+        $or: [{ shopper: userId }, { shopkeeper: userId }, { token: { $in: tokenIds } }]
+      }, options);
+      await Draw.deleteMany({
+        $or: [{ winnerUser: userId }, { winnerToken: { $in: tokenIds } }]
+      }, options);
+      await ShopDeletionRequest.deleteMany({
+        $or: [{ owner: userId }, { shopId: { $in: shopIds } }]
+      }, options);
+      await Shop.deleteMany({ owner: userId }, options);
+      await Token.deleteMany({ owner: userId }, options);
+      await Withdrawal.deleteMany({ user: userId }, options);
+      await ManualPayment.deleteMany({ user: userId }, options);
+      await WalletTransaction.deleteMany({ user: userId }, options);
+      await Wallet.deleteMany({ user: userId }, options);
+      await ReferralReward.deleteMany({ $or: [{ staff: userId }, { member: userId }] }, options);
+      await StaffPayoutRequest.deleteMany({ staff: userId }, options);
+      await StaffLedgerEntry.deleteMany({ staff: userId }, options);
+      await StaffWallet.deleteMany({ staff: userId }, options);
+      await User.updateMany(
+        { referredByStaff: userId },
+        { $set: { referredByStaff: null } },
+        options
+      );
+      await User.updateMany(
+        { deletedBy: userId },
+        { $set: { deletedBy: null } },
+        options
+      );
+      await Shop.updateMany({ reviewedBy: userId }, { $set: { reviewedBy: null } }, options);
+      await ShopDeletionRequest.updateMany({ reviewedBy: userId }, { $set: { reviewedBy: null } }, options);
+      await Withdrawal.updateMany({ processedBy: userId }, { $set: { processedBy: null } }, options);
+      await ManualPayment.updateMany({ reviewedBy: userId }, { $set: { reviewedBy: null } }, options);
+      await StaffPayoutRequest.updateMany({ processedBy: userId }, { $set: { processedBy: null } }, options);
+      await ReferralSettings.updateMany({ updatedBy: userId }, { $set: { updatedBy: null } }, options);
+      return [...new Set(orphanImageUrls.map(getCloudinaryPublicId).filter(Boolean))];
+    };
+    module2.exports = { deleteAccountData, deleteCloudinaryImages };
+  }
+});
+
 // src/controllers/admin.controller.js
 var require_admin_controller = __commonJS({
   "src/controllers/admin.controller.js"(exports2, module2) {
+    var mongoose = require("mongoose");
     var asyncHandler = require_asyncHandler();
     var ApiError = require_ApiError();
     var ApiResponse = require_ApiResponse();
@@ -3192,6 +3533,7 @@ var require_admin_controller = __commonJS({
     var Draw = require_draw_model();
     var CompanyWallet = require_companyWallet_model();
     var { creditWallet } = require_wallet_service();
+    var { deleteAccountData, deleteCloudinaryImages } = require_accountDeletion_service();
     var paginate = (query) => {
       const page = Math.max(Number(query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
@@ -3324,17 +3666,21 @@ var require_admin_controller = __commonJS({
       if (req.params.id === req.user._id.toString()) {
         throw new ApiError(400, "You cannot delete your own account");
       }
-      const user = await User.findById(req.params.id);
-      if (!user) {
-        throw new ApiError(404, "User not found");
+      const session = await mongoose.startSession();
+      let cloudinaryPublicIds = [];
+      try {
+        await session.withTransaction(async () => {
+          const user = await User.findById(req.params.id).session(session);
+          if (!user) throw new ApiError(404, "User not found");
+          cloudinaryPublicIds = await deleteAccountData(user._id, session);
+          const result = await User.deleteOne({ _id: user._id }, { session });
+          if (result.deletedCount !== 1) throw new ApiError(409, "The user account could not be deleted");
+        });
+      } finally {
+        await session.endSession();
       }
-      if (!user.deletedAt) {
-        user.deletedAt = /* @__PURE__ */ new Date();
-        user.deletedBy = req.user._id;
-        await user.setRefreshToken(null);
-        await user.save();
-      }
-      res.status(200).json(new ApiResponse(200, { user }, "User deactivated; account and history retained"));
+      await deleteCloudinaryImages(cloudinaryPublicIds);
+      res.status(200).json(new ApiResponse(200, null, "User account and linked data permanently deleted"));
     });
     var restoreUser = asyncHandler(async (req, res) => {
       const user = await User.findById(req.params.id);
@@ -3506,76 +3852,6 @@ var require_shopAdmin_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, { shop }, "Shop rejected successfully"));
     });
     module2.exports = { listShops, getShop, approveShop, rejectShop };
-  }
-});
-
-// src/models/shopDeletionRequest.model.js
-var require_shopDeletionRequest_model = __commonJS({
-  "src/models/shopDeletionRequest.model.js"(exports2, module2) {
-    var mongoose = require("mongoose");
-    var shopDeletionRequestSchema = new mongoose.Schema(
-      {
-        shopId: {
-          type: mongoose.Schema.Types.ObjectId,
-          required: true
-        },
-        owner: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true,
-          index: true
-        },
-        ownerSnapshot: {
-          name: { type: String, required: true },
-          email: { type: String, required: true }
-        },
-        shopSnapshot: {
-          shopName: { type: String, required: true },
-          businessType: { type: String, required: true },
-          phoneNumber: { type: String, default: null },
-          businessAddress: { type: String, required: true },
-          businessDescription: { type: String, default: null },
-          businessImage: { type: String, default: null },
-          businessCategories: { type: [String], default: [] },
-          city: { type: String, default: null },
-          commissionRate: { type: Number, default: 2.5 }
-        },
-        reason: {
-          type: String,
-          trim: true,
-          maxlength: 500,
-          default: null
-        },
-        status: {
-          type: String,
-          enum: ["pending", "approved", "rejected"],
-          default: "pending",
-          index: true
-        },
-        reviewedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          default: null
-        },
-        reviewedAt: {
-          type: Date,
-          default: null
-        },
-        reviewNote: {
-          type: String,
-          trim: true,
-          maxlength: 500,
-          default: null
-        }
-      },
-      { timestamps: true }
-    );
-    shopDeletionRequestSchema.index(
-      { shopId: 1 },
-      { unique: true, partialFilterExpression: { status: "pending" } }
-    );
-    shopDeletionRequestSchema.index({ status: 1, createdAt: -1 });
-    module2.exports = mongoose.model("ShopDeletionRequest", shopDeletionRequestSchema);
   }
 });
 
@@ -3774,61 +4050,6 @@ var require_admin_validator = __commonJS({
   }
 });
 
-// src/models/staffPayoutRequest.model.js
-var require_staffPayoutRequest_model = __commonJS({
-  "src/models/staffPayoutRequest.model.js"(exports2, module2) {
-    var mongoose = require("mongoose");
-    var staffPayoutRequestSchema = new mongoose.Schema(
-      {
-        staff: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true,
-          index: true
-        },
-        amount: {
-          type: Number,
-          required: true,
-          min: 0.01
-        },
-        method: {
-          type: String,
-          enum: ["jazzcash", "easypaisa", "bank"],
-          required: true
-        },
-        accountDetails: {
-          type: String,
-          required: true,
-          trim: true
-        },
-        status: {
-          type: String,
-          enum: ["pending", "completed", "rejected"],
-          default: "pending",
-          index: true
-        },
-        processedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          default: null
-        },
-        processedAt: {
-          type: Date,
-          default: null
-        },
-        rejectionReason: {
-          type: String,
-          trim: true,
-          default: null
-        }
-      },
-      { timestamps: true }
-    );
-    staffPayoutRequestSchema.index({ createdAt: -1 });
-    module2.exports = mongoose.model("StaffPayoutRequest", staffPayoutRequestSchema);
-  }
-});
-
 // src/controllers/adminReferral.controller.js
 var require_adminReferral_controller = __commonJS({
   "src/controllers/adminReferral.controller.js"(exports2, module2) {
@@ -3845,6 +4066,7 @@ var require_adminReferral_controller = __commonJS({
     var StaffLedgerEntry = require_staffLedgerEntry_model();
     var Shop = require_shop_model();
     var { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require_referral_service();
+    var { deleteAccountData, deleteCloudinaryImages } = require_accountDeletion_service();
     var { sendStaffInviteEmail } = require_mailer();
     var paginate = (query, prefix = "") => {
       const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
@@ -4102,15 +4324,21 @@ var require_adminReferral_controller = __commonJS({
       res.status(200).json(new ApiResponse(200, { staff }, "Staff member updated successfully"));
     });
     var deleteStaff = asyncHandler(async (req, res) => {
-      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
-      if (!staff) throw new ApiError(404, "Staff member not found");
-      if (!staff.deletedAt) {
-        staff.deletedAt = /* @__PURE__ */ new Date();
-        staff.deletedBy = req.user._id;
-        await staff.setRefreshToken(null);
-        await staff.save();
+      const session = await mongoose.startSession();
+      let cloudinaryPublicIds = [];
+      try {
+        await session.withTransaction(async () => {
+          const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).session(session);
+          if (!staff) throw new ApiError(404, "Staff member not found");
+          cloudinaryPublicIds = await deleteAccountData(staff._id, session);
+          const result = await User.deleteOne({ _id: staff._id }, { session });
+          if (result.deletedCount !== 1) throw new ApiError(409, "The staff account could not be deleted");
+        });
+      } finally {
+        await session.endSession();
       }
-      res.status(200).json(new ApiResponse(200, { staff }, "Staff account deactivated; referral and payment history retained"));
+      await deleteCloudinaryImages(cloudinaryPublicIds);
+      res.status(200).json(new ApiResponse(200, null, "Staff account and linked data permanently deleted"));
     });
     var restoreStaff = asyncHandler(async (req, res) => {
       const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
@@ -4391,7 +4619,7 @@ var require_admin_routes = __commonJS({
     router.patch("/users/:id", updateUserValidator, validate, updateUser);
     router.post("/users/:id/block", blockUser);
     router.post("/users/:id/unblock", unblockUser);
-    router.delete("/users/:id", deleteUser);
+    router.delete("/users/:id", [param("id").isMongoId().withMessage("id must be a valid id")], validate, deleteUser);
     router.post("/users/:id/restore", [param("id").isMongoId().withMessage("id must be a valid id")], validate, restoreUser);
     router.post("/users/:id/wallet-credit", creditWalletValidator, validate, creditUserWallet);
     router.get("/payments", listPayments);

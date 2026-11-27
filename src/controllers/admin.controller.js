@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const asyncHandler = require('../utils/asyncHandler');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -10,6 +11,7 @@ const Withdrawal = require('../models/withdrawal.model');
 const Draw = require('../models/draw.model');
 const CompanyWallet = require('../models/companyWallet.model');
 const { creditWallet } = require('../services/wallet.service');
+const { deleteAccountData, deleteCloudinaryImages } = require('../services/accountDeletion.service');
 
 const paginate = (query) => {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -179,24 +181,29 @@ const unblockUser = asyncHandler(async (req, res) => {
 });
 
 // DELETE /api/admin/users/:id
-// Deactivate the account without removing wallet, token, or transaction history.
+// Permanently remove the account and directly linked database records.
 const deleteUser = asyncHandler(async (req, res) => {
   if (req.params.id === req.user._id.toString()) {
     throw new ApiError(400, 'You cannot delete your own account');
   }
 
-  const user = await User.findById(req.params.id);
-  if (!user) {
-    throw new ApiError(404, 'User not found');
-  }
-  if (!user.deletedAt) {
-    user.deletedAt = new Date();
-    user.deletedBy = req.user._id;
-    await user.setRefreshToken(null);
-    await user.save();
+  const session = await mongoose.startSession();
+  let cloudinaryPublicIds = [];
+  try {
+    await session.withTransaction(async () => {
+      const user = await User.findById(req.params.id).session(session);
+      if (!user) throw new ApiError(404, 'User not found');
+
+      cloudinaryPublicIds = await deleteAccountData(user._id, session);
+      const result = await User.deleteOne({ _id: user._id }, { session });
+      if (result.deletedCount !== 1) throw new ApiError(409, 'The user account could not be deleted');
+    });
+  } finally {
+    await session.endSession();
   }
 
-  res.status(200).json(new ApiResponse(200, { user }, 'User deactivated; account and history retained'));
+  await deleteCloudinaryImages(cloudinaryPublicIds);
+  res.status(200).json(new ApiResponse(200, null, 'User account and linked data permanently deleted'));
 });
 
 // POST /api/admin/users/:id/restore

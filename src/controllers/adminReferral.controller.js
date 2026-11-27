@@ -11,6 +11,7 @@ const StaffPayoutRequest = require('../models/staffPayoutRequest.model');
 const StaffLedgerEntry = require('../models/staffLedgerEntry.model');
 const Shop = require('../models/shop.model');
 const { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require('../services/referral.service');
+const { deleteAccountData, deleteCloudinaryImages } = require('../services/accountDeletion.service');
 const { sendStaffInviteEmail } = require('../utils/mailer');
 
 const paginate = (query, prefix = '') => {
@@ -303,16 +304,22 @@ const updateStaff = asyncHandler(async (req, res) => {
 });
 
 const deleteStaff = asyncHandler(async (req, res) => {
-  const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' });
-  if (!staff) throw new ApiError(404, 'Staff member not found');
+  const session = await mongoose.startSession();
+  let cloudinaryPublicIds = [];
+  try {
+    await session.withTransaction(async () => {
+      const staff = await User.findOne({ _id: req.params.staffId, role: 'staff' }).session(session);
+      if (!staff) throw new ApiError(404, 'Staff member not found');
 
-  if (!staff.deletedAt) {
-    staff.deletedAt = new Date();
-    staff.deletedBy = req.user._id;
-    await staff.setRefreshToken(null);
-    await staff.save();
+      cloudinaryPublicIds = await deleteAccountData(staff._id, session);
+      const result = await User.deleteOne({ _id: staff._id }, { session });
+      if (result.deletedCount !== 1) throw new ApiError(409, 'The staff account could not be deleted');
+    });
+  } finally {
+    await session.endSession();
   }
-  res.status(200).json(new ApiResponse(200, { staff }, 'Staff account deactivated; referral and payment history retained'));
+  await deleteCloudinaryImages(cloudinaryPublicIds);
+  res.status(200).json(new ApiResponse(200, null, 'Staff account and linked data permanently deleted'));
 });
 
 const restoreStaff = asyncHandler(async (req, res) => {

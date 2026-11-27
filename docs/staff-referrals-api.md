@@ -48,12 +48,12 @@ All admin endpoints below require an authenticated `admin` account.
 | `POST` | `/api/admin/staff` | Create a verified staff account, generate a referral code, and email a single-use password-setup link |
 | `GET` | `/api/admin/staff/:staffId` | Staff profile, summary, paginated referrals, commission rewards, payouts and ledger |
 | `PATCH` | `/api/admin/staff/:staffId` | Edit staff profile, block status, commission rules or global-rule assignment |
-| `DELETE` | `/api/admin/staff/:staffId` | Deactivate the account while preserving referral and payment history |
-| `POST` | `/api/admin/staff/:staffId/restore` | Restore a deactivated staff account |
+| `DELETE` | `/api/admin/staff/:staffId` | Permanently delete the account, linked referral and payout records, and owned Cloudinary images |
+| `POST` | `/api/admin/staff/:staffId/restore` | Restore a legacy soft-deleted account that has not been permanently deleted |
 | `GET` | `/api/admin/staff-payouts?status=pending&page=1&limit=20&search=` | Review and search payment requests across all staff |
 | `POST` | `/api/admin/staff-payouts/:payoutId/process` | Complete or reject a pending payment request |
 
-Deactivated staff cannot sign in. Their account is excluded from the staff list by default; pass `isDeleted=true` to review deactivated accounts. Restoring an account preserves its existing blocked status.
+Permanently deleted staff and their linked history cannot be restored. Legacy soft-deleted staff remain excluded from the staff list by default; pass `isDeleted=true` to review them. Restoring a legacy account preserves its existing blocked status. Deletion is transactional; an inconsistent referral ledger prevents deletion rather than rewriting unreliable payout balances.
 
 Rule values use this shape:
 

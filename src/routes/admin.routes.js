@@ -80,7 +80,7 @@ router.get('/users/:id', getUser);
 router.patch('/users/:id', updateUserValidator, validate, updateUser);
 router.post('/users/:id/block', blockUser);
 router.post('/users/:id/unblock', unblockUser);
-router.delete('/users/:id', deleteUser);
+router.delete('/users/:id', [param('id').isMongoId().withMessage('id must be a valid id')], validate, deleteUser);
 router.post('/users/:id/restore', [param('id').isMongoId().withMessage('id must be a valid id')], validate, restoreUser);
 router.post('/users/:id/wallet-credit', creditWalletValidator, validate, creditUserWallet);
 router.get('/payments', listPayments);
