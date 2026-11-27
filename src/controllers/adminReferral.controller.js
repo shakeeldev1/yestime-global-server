@@ -11,6 +11,8 @@ const StaffPayoutRequest = require('../models/staffPayoutRequest.model');
 const StaffLedgerEntry = require('../models/staffLedgerEntry.model');
 const Shop = require('../models/shop.model');
 const { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require('../services/referral.service');
+const { generateOtp, hashOtp, getOtpExpiry } = require('../utils/otp');
+const { sendOtpEmail } = require('../utils/mailer');
 
 const paginate = (query, prefix = '') => {
   const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
@@ -96,6 +98,8 @@ const createStaff = asyncHandler(async (req, res) => {
     throw new ApiError(409, 'An account with this email already exists');
   }
   const settings = await ensureReferralSettings();
+  const setupOtp = generateOtp();
+  const setupOtpHash = await hashOtp(setupOtp);
   const session = await mongoose.startSession();
   let staff;
   try {
@@ -104,10 +108,13 @@ const createStaff = asyncHandler(async (req, res) => {
         [{
           name: req.body.name,
           email,
-          password: req.body.password,
+          password: crypto.randomBytes(32).toString('hex'),
           phoneNumber: req.body.phoneNumber || null,
           role: 'staff',
           isVerified: true,
+          otpHash: setupOtpHash,
+          otpExpiry: getOtpExpiry(),
+          otpPurpose: 'reset-password',
           staffReferralCode: await createReferralCode(),
           staffCommissionRules: req.body.commissionRules || settings.defaultRules || DEFAULT_RULES,
           usesGlobalCommissionRules: req.body.commissionRules === undefined,
@@ -119,7 +126,34 @@ const createStaff = asyncHandler(async (req, res) => {
   } finally {
     await session.endSession();
   }
-  res.status(201).json(new ApiResponse(201, { staff }, 'Staff member created successfully'));
+  try {
+    await sendOtpEmail({ to: staff.email, name: staff.name, otp: setupOtp, purpose: 'reset-password', isStaffInvite: true });
+  } catch {
+    throw new ApiError(
+      502,
+      'Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password setup page to request a new code.'
+    );
+  }
+  res.status(201).json(
+    new ApiResponse(
+      201,
+      {
+        staff: {
+          _id: staff._id,
+          name: staff.name,
+          email: staff.email,
+          phoneNumber: staff.phoneNumber,
+          role: staff.role,
+          staffReferralCode: staff.staffReferralCode,
+          staffCommissionRules: staff.staffCommissionRules,
+          usesGlobalCommissionRules: staff.usesGlobalCommissionRules,
+          isVerified: staff.isVerified,
+          createdAt: staff.createdAt,
+        },
+      },
+      'Staff member created and password setup email sent successfully'
+    )
+  );
 });
 
 const getStaffDetail = asyncHandler(async (req, res) => {

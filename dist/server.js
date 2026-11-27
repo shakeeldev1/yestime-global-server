@@ -505,21 +505,31 @@ var require_mailer = __commonJS({
         html
       });
     };
-    var otpEmailTemplate = ({ name, otp, purposeText }) => `
+    var escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[character]);
+    var otpEmailTemplate = ({ name, otp, purposeText, actionUrl, footerText }) => `
   <div style="font-family: Arial, sans-serif; max-width: 480px; margin: auto;">
-    <h2>Hi ${name},</h2>
+    <h2>Hi ${escapeHtml(name)},</h2>
     <p>${purposeText}</p>
     <p style="font-size: 32px; font-weight: bold; letter-spacing: 6px;">${otp}</p>
-    <p>This code expires in ${env2.OTP_EXPIRES_IN_MINUTES} minutes. If you did not request this, you can safely ignore this email.</p>
+    ${actionUrl ? `<p><a href="${escapeHtml(actionUrl)}">Set your password</a></p>` : ""}
+    <p>This code expires in ${env2.OTP_EXPIRES_IN_MINUTES} minutes. ${footerText}</p>
   </div>
 `;
-    var sendOtpEmail = async ({ to, name, otp, purpose }) => {
-      const purposeText = purpose === "reset-password" ? "Use the code below to reset your password." : "Use the code below to verify your email address.";
-      const subject = purpose === "reset-password" ? "Your password reset code" : "Verify your email address";
+    var sendOtpEmail = async ({ to, name, otp, purpose, isStaffInvite = false }) => {
+      const purposeText = isStaffInvite ? "An administrator created a staff account for you. Use the code below to set your password." : purpose === "reset-password" ? "Use the code below to reset your password." : "Use the code below to verify your email address.";
+      const subject = isStaffInvite ? "Set up your Yes Time Global staff account" : purpose === "reset-password" ? "Your password reset code" : "Verify your email address";
+      const actionUrl = purpose === "reset-password" ? `${env2.CLIENT_URL.replace(/\/+$/, "")}/set-password` : null;
+      const footerText = isStaffInvite ? "If you were not expecting a staff account, contact your administrator." : "If you did not request this, you can safely ignore this email.";
       await sendMail({
         to,
         subject,
-        html: otpEmailTemplate({ name, otp, purposeText })
+        html: otpEmailTemplate({ name, otp, purposeText, actionUrl, footerText })
       });
     };
     var notifyAdmin = async ({ subject, html }) => {
@@ -3694,6 +3704,8 @@ var require_adminReferral_controller = __commonJS({
     var StaffLedgerEntry = require_staffLedgerEntry_model();
     var Shop = require_shop_model();
     var { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require_referral_service();
+    var { generateOtp, hashOtp, getOtpExpiry } = require_otp();
+    var { sendOtpEmail } = require_mailer();
     var paginate = (query, prefix = "") => {
       const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
       const limit = Math.min(Math.max(Number(query[`${prefix}limit`] || query.limit) || 20, 1), 100);
@@ -3766,6 +3778,8 @@ var require_adminReferral_controller = __commonJS({
         throw new ApiError(409, "An account with this email already exists");
       }
       const settings = await ensureReferralSettings();
+      const setupOtp = generateOtp();
+      const setupOtpHash = await hashOtp(setupOtp);
       const session = await mongoose.startSession();
       let staff;
       try {
@@ -3774,10 +3788,13 @@ var require_adminReferral_controller = __commonJS({
             [{
               name: req.body.name,
               email,
-              password: req.body.password,
+              password: crypto.randomBytes(32).toString("hex"),
               phoneNumber: req.body.phoneNumber || null,
               role: "staff",
               isVerified: true,
+              otpHash: setupOtpHash,
+              otpExpiry: getOtpExpiry(),
+              otpPurpose: "reset-password",
               staffReferralCode: await createReferralCode(),
               staffCommissionRules: req.body.commissionRules || settings.defaultRules || DEFAULT_RULES,
               usesGlobalCommissionRules: req.body.commissionRules === void 0
@@ -3789,7 +3806,34 @@ var require_adminReferral_controller = __commonJS({
       } finally {
         await session.endSession();
       }
-      res.status(201).json(new ApiResponse(201, { staff }, "Staff member created successfully"));
+      try {
+        await sendOtpEmail({ to: staff.email, name: staff.name, otp: setupOtp, purpose: "reset-password", isStaffInvite: true });
+      } catch {
+        throw new ApiError(
+          502,
+          "Staff account was created, but the password setup email could not be sent. Do not retry account creation; ask the staff member to use the password setup page to request a new code."
+        );
+      }
+      res.status(201).json(
+        new ApiResponse(
+          201,
+          {
+            staff: {
+              _id: staff._id,
+              name: staff.name,
+              email: staff.email,
+              phoneNumber: staff.phoneNumber,
+              role: staff.role,
+              staffReferralCode: staff.staffReferralCode,
+              staffCommissionRules: staff.staffCommissionRules,
+              usesGlobalCommissionRules: staff.usesGlobalCommissionRules,
+              isVerified: staff.isVerified,
+              createdAt: staff.createdAt
+            }
+          },
+          "Staff member created and password setup email sent successfully"
+        )
+      );
     });
     var getStaffDetail = asyncHandler(async (req, res) => {
       const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt updatedAt").lean();
@@ -4022,7 +4066,6 @@ var require_referral_validator = __commonJS({
     var createStaffValidator = [
       body("name").trim().notEmpty().withMessage("Name is required"),
       body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
-      body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
       body("phoneNumber").optional({ values: "null" }).trim().isLength({ max: 20 }).withMessage("phoneNumber must be at most 20 characters"),
       ...commissionRulesFields("commissionRules")
     ];

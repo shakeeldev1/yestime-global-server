@@ -44,7 +44,7 @@ All admin endpoints below require an authenticated `admin` account.
 | `GET` | `/api/admin/referral-settings` | Read global default rules |
 | `PATCH` | `/api/admin/referral-settings` | Set global default shopper and shopkeeper rules |
 | `GET` | `/api/admin/staff?search=&page=1&limit=20` | Search and paginate staff with balance and referral totals |
-| `POST` | `/api/admin/staff` | Create a verified staff login and generated referral code |
+| `POST` | `/api/admin/staff` | Create a verified staff account, generate a referral code, and email a password-setup OTP/link |
 | `GET` | `/api/admin/staff/:staffId` | Staff profile, summary, paginated referrals, commission rewards, payouts and ledger |
 | `PATCH` | `/api/admin/staff/:staffId` | Change staff profile, block status, commission rules or global-rule assignment |
 | `GET` | `/api/admin/staff-payouts?status=pending&page=1&limit=20` | Review payment requests across all staff |
@@ -62,5 +62,7 @@ Rule values use this shape:
 ```
 
 `type` is `fixed` or `percentage`; percentage values are limited to 0–100. The staff creation request accepts the same object as `commissionRules` to set staff-specific rules; omit it to assign the current global rules.
+
+Staff set their initial password at the emailed `/set-password` link using the one-time code. If the email cannot be delivered, the account remains created; the staff member can request a fresh code from the password setup page. The same page supports password resets.
 
 The staff detail endpoint accepts independent page parameters `referralspage`, `rewardspage`, `payoutspage`, and `ledgerpage`, each with a matching `*limit` parameter (maximum 100). It returns complete totals independently of those pages.

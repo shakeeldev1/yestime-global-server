@@ -34,7 +34,6 @@ const staffListValidator = [
 const createStaffValidator = [
   body('name').trim().notEmpty().withMessage('Name is required'),
   body('email').trim().isEmail().withMessage('A valid email is required').normalizeEmail(),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
   body('phoneNumber').optional({ values: 'null' }).trim().isLength({ max: 20 }).withMessage('phoneNumber must be at most 20 characters'),
   ...commissionRulesFields('commissionRules'),
 ];
