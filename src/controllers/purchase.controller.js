@@ -7,6 +7,7 @@ const Shop = require('../models/shop.model');
 const { debitWallet, creditWallet, creditCompanyWallet } = require('../services/wallet.service');
 const { contributeToActiveToken, getActiveToken } = require('../services/token.service');
 const { getCompanyRate, DEALER_OWN_RATE } = require('../utils/commission');
+const mongoose = require('mongoose');
 
 const round2 = (n) => Number(n.toFixed(2));
 
@@ -14,12 +15,12 @@ const round2 = (n) => Number(n.toFixed(2));
 // `companyAmount` out of `payerId`'s own wallet into the company wallet,
 // credits `amount` to the buyer's lottery wallet, and runs the level-unlock
 // loop on their active token. Returns the pieces the caller needs to persist.
-const applyPurchase = async ({ payerId, buyerId, amount, companyAmount, meta }) => {
-  await debitWallet(payerId, 'main', companyAmount, 'tax_debit', meta);
-  await creditCompanyWallet(payerId, companyAmount, 'admin_credit', meta);
+const applyPurchase = async ({ payerId, buyerId, amount, companyAmount, meta, session }) => {
+  await debitWallet(payerId, 'main', companyAmount, 'tax_debit', meta, { session });
+  await creditCompanyWallet(payerId, companyAmount, 'admin_credit', meta, { session });
 
-  await creditWallet(buyerId, 'lottery', amount, 'purchase_credit', meta);
-  return contributeToActiveToken(buyerId, amount);
+  await creditWallet(buyerId, 'lottery', amount, 'purchase_credit', meta, { session });
+  return contributeToActiveToken(buyerId, amount, { session });
 };
 
 // POST /api/purchases (shopkeeper only — covers both `shop` sales and
@@ -31,7 +32,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
   let selectedShop = null;
   if (shopId) {
     selectedShop = await Shop.findById(shopId)
-      .select('owner businessType businessCategories commissionRate')
+      .select('owner businessType businessCategories')
       .lean();
     if (!selectedShop) {
       throw new ApiError(404, 'Shop not found');
@@ -48,7 +49,7 @@ const recordPurchase = asyncHandler(async (req, res) => {
       $or: [{ approvalStatus: 'approved' }, { approvalStatus: { $exists: false }, isVerified: true }],
     })
       .sort({ createdAt: -1, _id: -1 })
-      .select('businessType businessCategories commissionRate')
+      .select('businessType businessCategories')
       .lean());
 
   if (!shopkeeper.businessType && !purchaseShop) {
@@ -63,50 +64,66 @@ const recordPurchase = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'You are not registered for this purchase category');
   }
 
-  const token = await Token.findOne({ tokenNumber });
-  if (!token) {
-    throw new ApiError(404, 'No account found with this token number');
-  }
-  if (token.status !== 'active') {
-    throw new ApiError(400, 'This token is no longer active; ask the buyer for their current token number');
-  }
-
   const isShop = (purchaseShop?.businessType || shopkeeper.businessType) === 'shop';
-  const taxRate = purchaseShop
-    ? purchaseShop.commissionRate ?? getCompanyRate(purchaseShop.businessCategories?.[0])
-    : shopkeeper.taxRate ?? getCompanyRate(category);
+  const taxRate = getCompanyRate(category);
   const taxAmount = round2(amount * (taxRate / 100));
   const dealerCommissionAmount = isShop ? 0 : round2(amount * (DEALER_OWN_RATE / 100));
 
   // The shopper already paid the shopkeeper/dealer in full, outside the app
   // (cash, in person) — for a dealer this includes their own commission cut,
   // so only the company's share is ever debited here.
-  const { leveledUp, completed, newToken } = await applyPurchase({
-    payerId: shopkeeper._id,
-    buyerId: token.owner,
-    amount,
-    companyAmount: taxAmount,
-    meta: { tokenNumber, amount, category },
-  });
+  const session = await mongoose.startSession();
+  let purchase;
+  let purchaseResult;
+  try {
+    await session.withTransaction(async () => {
+      const token = await Token.findOne({ tokenNumber }).session(session);
+      if (!token) {
+        throw new ApiError(404, 'No account found with this token number');
+      }
+      if (token.status !== 'active') {
+        throw new ApiError(400, 'This token is no longer active; ask the buyer for their current token number');
+      }
 
-  const purchase = await Purchase.create({
-    shopper: token.owner,
-    shopkeeper: shopkeeper._id,
-    channel: isShop ? 'shopkeeper' : 'dealer',
-    token: token._id,
-    tokenNumber: token.tokenNumber,
-    category,
-    amount,
-    taxRate,
-    taxAmount,
-    dealerCommissionAmount,
-    leveledUp,
-  });
+      purchaseResult = await applyPurchase({
+        payerId: shopkeeper._id,
+        buyerId: token.owner,
+        amount,
+        companyAmount: taxAmount,
+        meta: { tokenNumber, amount, category },
+        session,
+      });
+
+      [purchase] = await Purchase.create(
+        [{
+          shopper: token.owner,
+          shopkeeper: shopkeeper._id,
+          channel: isShop ? 'shopkeeper' : 'dealer',
+          token: token._id,
+          tokenNumber: token.tokenNumber,
+          category,
+          amount,
+          taxRate,
+          taxAmount,
+          dealerCommissionAmount,
+          leveledUp: purchaseResult.leveledUp,
+        }],
+        { session }
+      );
+    });
+  } finally {
+    await session.endSession();
+  }
 
   res.status(201).json(
     new ApiResponse(
       201,
-      { purchase, leveledUp, tokenCompleted: completed, newToken },
+      {
+        purchase,
+        leveledUp: purchaseResult.leveledUp,
+        tokenCompleted: purchaseResult.completed,
+        newToken: purchaseResult.newToken,
+      },
       'Purchase recorded successfully'
     )
   );
@@ -118,40 +135,58 @@ const recordSelfPurchase = asyncHandler(async (req, res) => {
   const { category, amount } = req.body;
   const shopper = req.user;
 
-  const token = await getActiveToken(shopper._id);
-  if (!token) {
-    throw new ApiError(400, 'You need an active token before recording a purchase — activate one first');
-  }
-
   const taxRate = getCompanyRate(category);
   const taxAmount = round2(amount * (taxRate / 100));
 
-  const { leveledUp, completed, newToken } = await applyPurchase({
-    payerId: shopper._id,
-    buyerId: shopper._id,
-    amount,
-    companyAmount: taxAmount,
-    meta: { tokenNumber: token.tokenNumber, amount, category },
-  });
+  const session = await mongoose.startSession();
+  let purchase;
+  let purchaseResult;
+  try {
+    await session.withTransaction(async () => {
+      const token = await getActiveToken(shopper._id, { session });
+      if (!token) {
+        throw new ApiError(400, 'You need an active token before recording a purchase — activate one first');
+      }
 
-  const purchase = await Purchase.create({
-    shopper: shopper._id,
-    shopkeeper: null,
-    channel: 'self',
-    token: token._id,
-    tokenNumber: token.tokenNumber,
-    category,
-    amount,
-    taxRate,
-    taxAmount,
-    dealerCommissionAmount: 0,
-    leveledUp,
-  });
+      purchaseResult = await applyPurchase({
+        payerId: shopper._id,
+        buyerId: shopper._id,
+        amount,
+        companyAmount: taxAmount,
+        meta: { tokenNumber: token.tokenNumber, amount, category },
+        session,
+      });
+
+      [purchase] = await Purchase.create(
+        [{
+          shopper: shopper._id,
+          shopkeeper: null,
+          channel: 'self',
+          token: token._id,
+          tokenNumber: token.tokenNumber,
+          category,
+          amount,
+          taxRate,
+          taxAmount,
+          dealerCommissionAmount: 0,
+          leveledUp: purchaseResult.leveledUp,
+        }],
+        { session }
+      );
+    });
+  } finally {
+    await session.endSession();
+  }
 
   res.status(201).json(
     new ApiResponse(
       201,
-      { purchase, leveledUp, tokenCompleted: completed, newToken },
+      {
+        purchase,
+        leveledUp: purchaseResult.leveledUp,
+        tokenCompleted: purchaseResult.completed,
+        newToken: purchaseResult.newToken,
+      },
       'Purchase recorded successfully'
     )
   );

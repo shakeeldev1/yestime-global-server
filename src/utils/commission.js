@@ -21,7 +21,8 @@ const COMPANY_RATES = {
   other_custom: 2.5,
 };
 
-const getCompanyRate = (category) => COMPANY_RATES[category] ?? DEFAULT_COMPANY_RATE;
+const getCompanyRate = (category) =>
+  COMPANY_RATES[category === 'bike' ? 'motorcycle_scooty' : category] ?? DEFAULT_COMPANY_RATE;
 
 // A dealer's own 1% is collected directly from the buyer, outside the app.
 const DEALER_OWN_RATE = 1;
