@@ -59,12 +59,26 @@ const signup = asyncHandler(async (req, res) => {
     throw new ApiError(409, 'An account with this email already exists');
   }
 
+  const referralCode = req.body.referralCode?.trim().toUpperCase();
+  let referringStaff = null;
+  if (referralCode) {
+    referringStaff = await User.findOne({
+      staffReferralCode: referralCode,
+      role: 'staff',
+      isBlocked: false,
+    }).select('_id');
+    if (!referringStaff) {
+      throw new ApiError(400, 'Referral code is invalid or inactive');
+    }
+  }
+
   const user = await User.create({
     name,
     email,
     password,
     role: role || 'shopper',
     businessType: role === 'shopkeeper' ? businessType : null,
+    referredByStaff: referringStaff?._id || null,
   });
   await issueAndSendOtp(user, 'verify-email');
 

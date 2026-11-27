@@ -16,6 +16,11 @@ const signupValidator = [
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters long'),
+  body('referralCode')
+    .optional({ values: 'falsy' })
+    .trim()
+    .isLength({ min: 4, max: 32 })
+    .withMessage('referralCode must be between 4 and 32 characters'),
   body('role')
     .optional()
     .isIn(['shopper', 'shopkeeper'])

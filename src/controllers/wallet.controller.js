@@ -12,6 +12,7 @@ const {
   creditCompanyWallet,
 } = require('../services/wallet.service');
 const { createTokenForOwner, contributeToActiveToken } = require('../services/token.service');
+const { awardReferralCommission } = require('../services/referral.service');
 
 const ACTIVATION_FEE = 1000;
 const INITIAL_LOTTERY_BONUS = 21000;
@@ -118,6 +119,15 @@ const activate = asyncHandler(async (req, res) => {
 
       await debitWallet(user._id, 'main', ACTIVATION_FEE, 'activation_fee', {}, { session });
       await creditCompanyWallet(user._id, ACTIVATION_FEE, 'activation_fee', {}, { session });
+      await awardReferralCommission(
+        {
+          memberId: user._id,
+          memberType: 'shopper',
+          trigger: 'token_activation',
+          baseAmount: ACTIVATION_FEE,
+        },
+        { session }
+      );
 
       await createTokenForOwner(user._id, { generation: 1, pool: 0, session });
       const contribution = await contributeToActiveToken(user._id, INITIAL_LOTTERY_BONUS, { session });

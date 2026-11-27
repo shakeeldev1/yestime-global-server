@@ -32,12 +32,41 @@ const { rejectPaymentValidator } = require('../validators/wallet.validator');
 const { body, param, query } = require('express-validator');
 const validate = require('../middlewares/validate.middleware');
 const { authenticate, authorize } = require('../middlewares/auth.middleware');
+const {
+  listStaff,
+  createStaff,
+  getStaffDetail,
+  updateStaff,
+  getReferralSettings,
+  updateReferralSettings,
+  listStaffPayouts,
+  processStaffPayout,
+} = require('../controllers/adminReferral.controller');
+const {
+  staffListValidator,
+  createStaffValidator,
+  updateStaffValidator,
+  staffDetailValidator,
+  referralSettingsValidator,
+  payoutListValidator,
+  processPayoutValidator,
+} = require('../validators/referral.validator');
 
 const router = express.Router();
 
 router.use(authenticate, authorize('admin'));
 
 router.get('/stats', getStats);
+
+router.get('/referral-settings', getReferralSettings);
+router.patch('/referral-settings', referralSettingsValidator, validate, updateReferralSettings);
+router.get('/staff', staffListValidator, validate, listStaff);
+router.post('/staff', createStaffValidator, validate, createStaff);
+router.get('/staff/:staffId', staffDetailValidator, validate, getStaffDetail);
+router.patch('/staff/:staffId', updateStaffValidator, validate, updateStaff);
+router.get('/staff-payouts', payoutListValidator, validate, listStaffPayouts);
+router.get('/staff/:staffId/payouts', payoutListValidator, validate, listStaffPayouts);
+router.post('/staff-payouts/:payoutId/process', processPayoutValidator, validate, processStaffPayout);
 
 router.get('/users', listUsersValidator, validate, listUsers);
 router.post('/users', createUserValidator, validate, createUser);

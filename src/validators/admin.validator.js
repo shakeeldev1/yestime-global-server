@@ -1,7 +1,7 @@
 const { body, query } = require('express-validator');
 
 const listUsersValidator = [
-  query('role').optional().isIn(['shopper', 'shopkeeper', 'admin']).withMessage('Invalid role'),
+  query('role').optional().isIn(['shopper', 'shopkeeper', 'staff', 'admin']).withMessage('Invalid role'),
   query('businessType')
     .optional()
     .isIn(['shop', 'property', 'car', 'bike'])
@@ -28,7 +28,7 @@ const createUserValidator = [
 
 const updateUserValidator = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
-  body('role').optional().isIn(['shopper', 'shopkeeper', 'admin']).withMessage('Invalid role'),
+  body('role').optional().isIn(['shopper', 'shopkeeper', 'staff', 'admin']).withMessage('Invalid role'),
   body('businessType')
     .optional()
     .isIn(['shop', 'property', 'car', 'bike'])

@@ -23,7 +23,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['shopper', 'shopkeeper', 'admin'],
+      enum: ['shopper', 'shopkeeper', 'staff', 'admin'],
       default: 'shopper',
     },
     businessType: {
@@ -68,6 +68,49 @@ const userSchema = new mongoose.Schema(
     shopkeeperRegisteredAt: {
       type: Date,
       default: null,
+    },
+    referredByStaff: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    staffReferralCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      unique: true,
+      sparse: true,
+    },
+    staffCommissionRules: {
+      shopper: {
+        type: {
+          type: String,
+          enum: ['fixed', 'percentage'],
+          default: 'fixed',
+        },
+        value: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
+      },
+      shopkeeper: {
+        type: {
+          type: String,
+          enum: ['fixed', 'percentage'],
+          default: 'fixed',
+        },
+        value: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
+      },
+    },
+    usesGlobalCommissionRules: {
+      type: Boolean,
+      default: false,
     },
     taxRate: {
       type: Number,

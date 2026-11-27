@@ -8,6 +8,8 @@ const { debitWallet, creditCompanyWallet, getOrCreateWallet } = require('../serv
 const { uploadImageBuffer } = require('../lib/cloudinary');
 const { notifyAdmin, notifyUser } = require('../utils/mailer');
 const { getCompanyRate } = require('../utils/commission');
+const mongoose = require('mongoose');
+const { awardReferralCommission } = require('../services/referral.service');
 
 const SHOPKEEPER_REGISTRATION_FEE = 3000;
 const DEFAULT_SEARCH_RADIUS_KM = 50;
@@ -152,7 +154,6 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
   const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
   const businessType = getBusinessType(categories[0]);
   const commissionRate = getCompanyRate(categories[0]);
-  const isFirstShop = !(await Shop.exists({ owner: user._id }));
   let imageUrl = null;
 
   if (req.file) {
@@ -162,52 +163,79 @@ const registerShopkeeper = asyncHandler(async (req, res) => {
     imageUrl = uploadedImage.secure_url;
   }
 
-  const wallet = await getOrCreateWallet(user._id);
-  if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-    throw new ApiError(400, 'Insufficient main wallet balance for the Rs 3000 shop registration fee');
-  }
+  const session = await mongoose.startSession();
+  let shop;
+  try {
+    await session.withTransaction(async () => {
+      const isFirstShop = !(await Shop.exists({ owner: user._id }).session(session));
+      const wallet = await getOrCreateWallet(user._id, { session });
+      if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
+        throw new ApiError(400, 'Insufficient main wallet balance for the Rs 3000 shop registration fee');
+      }
 
-  await debitWallet(user._id, 'main', SHOPKEEPER_REGISTRATION_FEE, 'shopkeeper_registration_fee', {
-    shopName,
-    categories,
-  });
-  await creditCompanyWallet(user._id, SHOPKEEPER_REGISTRATION_FEE, 'shopkeeper_registration_fee', {
-    shopName,
-    categories,
-  });
+      await debitWallet(
+        user._id,
+        'main',
+        SHOPKEEPER_REGISTRATION_FEE,
+        'shopkeeper_registration_fee',
+        { shopName, categories },
+        { session }
+      );
+      await creditCompanyWallet(
+        user._id,
+        SHOPKEEPER_REGISTRATION_FEE,
+        'shopkeeper_registration_fee',
+        { shopName, categories },
+        { session }
+      );
 
-  const shop = await Shop.create({
-    owner: user._id,
-    businessType,
-    shopName,
-    phoneNumber,
-    businessAddress: address,
-    businessDescription: description || null,
-    businessImage: imageUrl,
-    businessCategories: [...new Set(categories)],
-    commissionRate,
-    city,
-    location: { type: 'Point', coordinates: [lng, lat] },
-    registrationFee: SHOPKEEPER_REGISTRATION_FEE,
-    approvalStatus: 'pending',
-    isVerified: false,
-  });
+      [shop] = await Shop.create(
+        [{
+          owner: user._id,
+          businessType,
+          shopName,
+          phoneNumber,
+          businessAddress: address,
+          businessDescription: description || null,
+          businessImage: imageUrl,
+          businessCategories: [...new Set(categories)],
+          commissionRate,
+          city,
+          location: { type: 'Point', coordinates: [lng, lat] },
+          registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+          approvalStatus: 'pending',
+          isVerified: false,
+        }],
+        { session }
+      );
 
-  // The first shop is the account's primary business; later registrations
-  // remain shop-specific and do not replace its account-level settings.
-  if (isFirstShop) {
-    if (user.role === 'shopper') user.role = 'shopkeeper';
-    user.businessType = businessType;
-    user.shopName = shopName;
-    user.phoneNumber = phoneNumber;
-    user.businessAddress = address;
-    user.businessDescription = description || null;
-    user.businessImage = imageUrl;
-    user.businessCategories = [...new Set(categories)];
-    user.taxRate = commissionRate;
-    user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
-    user.shopkeeperRegisteredAt = new Date();
-    await user.save();
+      if (isFirstShop) {
+        if (user.role === 'shopper') user.role = 'shopkeeper';
+        user.businessType = businessType;
+        user.shopName = shopName;
+        user.phoneNumber = phoneNumber;
+        user.businessAddress = address;
+        user.businessDescription = description || null;
+        user.businessImage = imageUrl;
+        user.businessCategories = [...new Set(categories)];
+        user.taxRate = commissionRate;
+        user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+        user.shopkeeperRegisteredAt = new Date();
+        await user.save({ session });
+      }
+
+      await awardReferralCommission(
+        {
+          memberId: user._id,
+          memberType: 'shopkeeper',
+          trigger: 'shop_registration',
+          baseAmount: SHOPKEEPER_REGISTRATION_FEE,
+        },
+        { session }
+      );
+    });
+  } finally {
+    await session.endSession();
   }
 
   Promise.all([

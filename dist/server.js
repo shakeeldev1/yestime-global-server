@@ -144,7 +144,7 @@ var require_user_model = __commonJS({
         },
         role: {
           type: String,
-          enum: ["shopper", "shopkeeper", "admin"],
+          enum: ["shopper", "shopkeeper", "staff", "admin"],
           default: "shopper"
         },
         businessType: {
@@ -189,6 +189,49 @@ var require_user_model = __commonJS({
         shopkeeperRegisteredAt: {
           type: Date,
           default: null
+        },
+        referredByStaff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+          index: true
+        },
+        staffReferralCode: {
+          type: String,
+          trim: true,
+          uppercase: true,
+          unique: true,
+          sparse: true
+        },
+        staffCommissionRules: {
+          shopper: {
+            type: {
+              type: String,
+              enum: ["fixed", "percentage"],
+              default: "fixed"
+            },
+            value: {
+              type: Number,
+              min: 0,
+              default: 0
+            }
+          },
+          shopkeeper: {
+            type: {
+              type: String,
+              enum: ["fixed", "percentage"],
+              default: "fixed"
+            },
+            value: {
+              type: Number,
+              min: 0,
+              default: 0
+            }
+          }
+        },
+        usesGlobalCommissionRules: {
+          type: Boolean,
+          default: false
         },
         taxRate: {
           type: Number,
@@ -544,12 +587,25 @@ var require_auth_controller = __commonJS({
       if (existingUser) {
         throw new ApiError(409, "An account with this email already exists");
       }
+      const referralCode = req.body.referralCode?.trim().toUpperCase();
+      let referringStaff = null;
+      if (referralCode) {
+        referringStaff = await User.findOne({
+          staffReferralCode: referralCode,
+          role: "staff",
+          isBlocked: false
+        }).select("_id");
+        if (!referringStaff) {
+          throw new ApiError(400, "Referral code is invalid or inactive");
+        }
+      }
       const user = await User.create({
         name,
         email,
         password,
         role: role || "shopper",
-        businessType: role === "shopkeeper" ? businessType : null
+        businessType: role === "shopkeeper" ? businessType : null,
+        referredByStaff: referringStaff?._id || null
       });
       await issueAndSendOtp(user, "verify-email");
       res.status(201).json(
@@ -797,6 +853,7 @@ var require_auth_validator = __commonJS({
       body("name").trim().notEmpty().withMessage("Name is required"),
       emailField,
       body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
+      body("referralCode").optional({ values: "falsy" }).trim().isLength({ min: 4, max: 32 }).withMessage("referralCode must be between 4 and 32 characters"),
       body("role").optional().isIn(["shopper", "shopkeeper"]).withMessage("Role must be shopper or shopkeeper"),
       body("businessType").if(body("role").equals("shopkeeper")).notEmpty().withMessage("businessType is required for shopkeeper accounts").bail().isIn(["shop", "property", "car", "bike"]).withMessage("businessType must be one of shop, property, car, bike")
     ];
@@ -1318,6 +1375,281 @@ var require_token_service = __commonJS({
   }
 });
 
+// src/models/referralSettings.model.js
+var require_referralSettings_model = __commonJS({
+  "src/models/referralSettings.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var commissionRuleSchema = new mongoose.Schema(
+      {
+        type: {
+          type: String,
+          enum: ["fixed", "percentage"],
+          default: "fixed",
+          required: true
+        },
+        value: {
+          type: Number,
+          min: 0,
+          default: 0,
+          required: true
+        }
+      },
+      { _id: false }
+    );
+    var referralSettingsSchema = new mongoose.Schema(
+      {
+        key: {
+          type: String,
+          default: "global",
+          unique: true
+        },
+        defaultRules: {
+          shopper: { type: commissionRuleSchema, default: () => ({}) },
+          shopkeeper: { type: commissionRuleSchema, default: () => ({}) }
+        },
+        updatedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        }
+      },
+      { timestamps: true }
+    );
+    module2.exports = mongoose.model("ReferralSettings", referralSettingsSchema);
+  }
+});
+
+// src/models/referralReward.model.js
+var require_referralReward_model = __commonJS({
+  "src/models/referralReward.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var referralRewardSchema = new mongoose.Schema(
+      {
+        staff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        member: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true
+        },
+        memberType: {
+          type: String,
+          enum: ["shopper", "shopkeeper"],
+          required: true
+        },
+        trigger: {
+          type: String,
+          enum: ["token_activation", "shop_registration"],
+          required: true
+        },
+        baseAmount: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        commissionType: {
+          type: String,
+          enum: ["fixed", "percentage"],
+          required: true
+        },
+        commissionRate: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        commissionAmount: {
+          type: Number,
+          required: true,
+          min: 0
+        }
+      },
+      { timestamps: true }
+    );
+    referralRewardSchema.index({ member: 1, memberType: 1 }, { unique: true });
+    referralRewardSchema.index({ staff: 1, createdAt: -1 });
+    module2.exports = mongoose.model("ReferralReward", referralRewardSchema);
+  }
+});
+
+// src/models/staffWallet.model.js
+var require_staffWallet_model = __commonJS({
+  "src/models/staffWallet.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var staffWalletSchema = new mongoose.Schema(
+      {
+        staff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          unique: true
+        },
+        availableBalance: {
+          type: Number,
+          default: 0,
+          min: 0
+        },
+        reservedBalance: {
+          type: Number,
+          default: 0,
+          min: 0
+        },
+        paidBalance: {
+          type: Number,
+          default: 0,
+          min: 0
+        }
+      },
+      { timestamps: true }
+    );
+    module2.exports = mongoose.model("StaffWallet", staffWalletSchema);
+  }
+});
+
+// src/models/staffLedgerEntry.model.js
+var require_staffLedgerEntry_model = __commonJS({
+  "src/models/staffLedgerEntry.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var staffLedgerEntrySchema = new mongoose.Schema(
+      {
+        staff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        type: {
+          type: String,
+          enum: ["commission_earned", "payout_requested", "payout_rejected", "payout_completed"],
+          required: true
+        },
+        amount: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        availableBalanceAfter: {
+          type: Number,
+          required: true,
+          min: 0
+        },
+        reference: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null
+        },
+        meta: {
+          type: mongoose.Schema.Types.Mixed,
+          default: {}
+        }
+      },
+      { timestamps: true }
+    );
+    staffLedgerEntrySchema.index({ staff: 1, createdAt: -1 });
+    module2.exports = mongoose.model("StaffLedgerEntry", staffLedgerEntrySchema);
+  }
+});
+
+// src/services/referral.service.js
+var require_referral_service = __commonJS({
+  "src/services/referral.service.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var User = require_user_model();
+    var ReferralSettings = require_referralSettings_model();
+    var ReferralReward = require_referralReward_model();
+    var StaffWallet = require_staffWallet_model();
+    var StaffLedgerEntry = require_staffLedgerEntry_model();
+    var DEFAULT_RULES = {
+      shopper: { type: "fixed", value: 0 },
+      shopkeeper: { type: "fixed", value: 0 }
+    };
+    var round2 = (value) => Number(value.toFixed(2));
+    var getReferralSettings = async ({ session } = {}) => {
+      const query = ReferralSettings.findOneAndUpdate(
+        { key: "global" },
+        { $setOnInsert: { key: "global", defaultRules: DEFAULT_RULES } },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      if (session) query.session(session);
+      return query;
+    };
+    var calculateCommission = (rule, baseAmount) => {
+      const value = Number(rule?.value) || 0;
+      if (rule?.type === "percentage") return round2(baseAmount * value / 100);
+      return round2(value);
+    };
+    var createReferralReward = async ({ memberId, memberType, trigger, baseAmount }, { session }) => {
+      const member = await User.findById(memberId).select("referredByStaff").session(session);
+      if (!member?.referredByStaff) return null;
+      const staff = await User.findOne({ _id: member.referredByStaff, role: "staff" }).select("staffCommissionRules usesGlobalCommissionRules").session(session);
+      if (!staff) return null;
+      const existingReward = await ReferralReward.findOne({ member: memberId, memberType }).session(session);
+      if (existingReward) return existingReward;
+      const settings = await getReferralSettings({ session });
+      const rule = staff.usesGlobalCommissionRules ? settings.defaultRules?.[memberType] || DEFAULT_RULES[memberType] : staff.staffCommissionRules?.[memberType] || settings.defaultRules?.[memberType] || DEFAULT_RULES[memberType];
+      const commissionAmount = calculateCommission(rule, baseAmount);
+      const [reward] = await ReferralReward.create(
+        [{
+          staff: staff._id,
+          member: memberId,
+          memberType,
+          trigger,
+          baseAmount: round2(baseAmount),
+          commissionType: rule.type,
+          commissionRate: Number(rule.value) || 0,
+          commissionAmount
+        }],
+        { session }
+      );
+      const wallet = await StaffWallet.findOneAndUpdate(
+        { staff: staff._id },
+        { $setOnInsert: { staff: staff._id }, $inc: { availableBalance: commissionAmount } },
+        { upsert: true, new: true, setDefaultsOnInsert: true, session }
+      );
+      if (commissionAmount > 0) {
+        await StaffLedgerEntry.create(
+          [{
+            staff: staff._id,
+            type: "commission_earned",
+            amount: commissionAmount,
+            availableBalanceAfter: wallet.availableBalance,
+            reference: reward._id,
+            meta: {
+              member: memberId,
+              memberType,
+              trigger,
+              baseAmount: reward.baseAmount,
+              commissionType: rule.type,
+              commissionRate: rule.value
+            }
+          }],
+          { session }
+        );
+      }
+      return reward;
+    };
+    var awardReferralCommission = async (data, options = {}) => {
+      if (options.session) return createReferralReward(data, options);
+      const session = await mongoose.startSession();
+      let reward = null;
+      try {
+        await session.withTransaction(async () => {
+          reward = await createReferralReward(data, { session });
+        });
+      } catch (error) {
+        if (error.code !== 11e3) throw error;
+        return null;
+      } finally {
+        await session.endSession();
+      }
+      return reward;
+    };
+    module2.exports = { DEFAULT_RULES, calculateCommission, getReferralSettings, awardReferralCommission };
+  }
+});
+
 // src/controllers/wallet.controller.js
 var require_wallet_controller = __commonJS({
   "src/controllers/wallet.controller.js"(exports2, module2) {
@@ -1335,6 +1667,7 @@ var require_wallet_controller = __commonJS({
       creditCompanyWallet
     } = require_wallet_service();
     var { createTokenForOwner, contributeToActiveToken } = require_token_service();
+    var { awardReferralCommission } = require_referral_service();
     var ACTIVATION_FEE = 1e3;
     var INITIAL_LOTTERY_BONUS = 21e3;
     var myWallet = asyncHandler(async (req, res) => {
@@ -1420,6 +1753,15 @@ var require_wallet_controller = __commonJS({
           }
           await debitWallet(user._id, "main", ACTIVATION_FEE, "activation_fee", {}, { session });
           await creditCompanyWallet(user._id, ACTIVATION_FEE, "activation_fee", {}, { session });
+          await awardReferralCommission(
+            {
+              memberId: user._id,
+              memberType: "shopper",
+              trigger: "token_activation",
+              baseAmount: ACTIVATION_FEE
+            },
+            { session }
+          );
           await createTokenForOwner(user._id, { generation: 1, pool: 0, session });
           const contribution = await contributeToActiveToken(user._id, INITIAL_LOTTERY_BONUS, { session });
           await creditWallet(
@@ -2800,6 +3142,9 @@ var require_admin_controller = __commonJS({
       if (!user) {
         throw new ApiError(404, "User not found");
       }
+      if (user.role === "staff" || req.body.role === "staff") {
+        throw new ApiError(400, "Manage referral staff through the staff management dashboard");
+      }
       const { name, role, businessType } = req.body;
       if (req.body.taxRate !== void 0) {
         throw new ApiError(400, "Tax rate is determined by the purchase category and cannot be changed per user");
@@ -2841,6 +3186,9 @@ var require_admin_controller = __commonJS({
       const user = await User.findById(req.params.id);
       if (!user) {
         throw new ApiError(404, "User not found");
+      }
+      if (user.role === "staff") {
+        throw new ApiError(400, "Staff records are retained for referral and payment history; block the account instead");
       }
       const [wallet, tokenCount] = await Promise.all([
         Wallet.findOne({ user: user._id }),
@@ -3247,7 +3595,7 @@ var require_admin_validator = __commonJS({
   "src/validators/admin.validator.js"(exports2, module2) {
     var { body, query } = require("express-validator");
     var listUsersValidator = [
-      query("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
+      query("role").optional().isIn(["shopper", "shopkeeper", "staff", "admin"]).withMessage("Invalid role"),
       query("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType"),
       query("isVerified").optional().isIn(["true", "false"]).withMessage("isVerified must be true or false"),
       query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false"),
@@ -3263,7 +3611,7 @@ var require_admin_validator = __commonJS({
     ];
     var updateUserValidator = [
       body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
-      body("role").optional().isIn(["shopper", "shopkeeper", "admin"]).withMessage("Invalid role"),
+      body("role").optional().isIn(["shopper", "shopkeeper", "staff", "admin"]).withMessage("Invalid role"),
       body("businessType").optional().isIn(["shop", "property", "car", "bike"]).withMessage("Invalid businessType")
     ];
     var creditWalletValidator = [
@@ -3272,6 +3620,459 @@ var require_admin_validator = __commonJS({
       body("note").optional().trim().isLength({ max: 200 }).withMessage("note must be 200 characters or fewer")
     ];
     module2.exports = { listUsersValidator, createUserValidator, updateUserValidator, creditWalletValidator };
+  }
+});
+
+// src/models/staffPayoutRequest.model.js
+var require_staffPayoutRequest_model = __commonJS({
+  "src/models/staffPayoutRequest.model.js"(exports2, module2) {
+    var mongoose = require("mongoose");
+    var staffPayoutRequestSchema = new mongoose.Schema(
+      {
+        staff: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+          index: true
+        },
+        amount: {
+          type: Number,
+          required: true,
+          min: 0.01
+        },
+        method: {
+          type: String,
+          enum: ["jazzcash", "easypaisa", "bank"],
+          required: true
+        },
+        accountDetails: {
+          type: String,
+          required: true,
+          trim: true
+        },
+        status: {
+          type: String,
+          enum: ["pending", "completed", "rejected"],
+          default: "pending",
+          index: true
+        },
+        processedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null
+        },
+        processedAt: {
+          type: Date,
+          default: null
+        },
+        rejectionReason: {
+          type: String,
+          trim: true,
+          default: null
+        }
+      },
+      { timestamps: true }
+    );
+    staffPayoutRequestSchema.index({ createdAt: -1 });
+    module2.exports = mongoose.model("StaffPayoutRequest", staffPayoutRequestSchema);
+  }
+});
+
+// src/controllers/adminReferral.controller.js
+var require_adminReferral_controller = __commonJS({
+  "src/controllers/adminReferral.controller.js"(exports2, module2) {
+    var crypto = require("crypto");
+    var mongoose = require("mongoose");
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var User = require_user_model();
+    var ReferralReward = require_referralReward_model();
+    var ReferralSettings = require_referralSettings_model();
+    var StaffWallet = require_staffWallet_model();
+    var StaffPayoutRequest = require_staffPayoutRequest_model();
+    var StaffLedgerEntry = require_staffLedgerEntry_model();
+    var Shop = require_shop_model();
+    var { DEFAULT_RULES, getReferralSettings: ensureReferralSettings } = require_referral_service();
+    var paginate = (query, prefix = "") => {
+      const page = Math.max(Number(query[`${prefix}page`] || query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query[`${prefix}limit`] || query.limit) || 20, 1), 100);
+      return { page, limit, skip: (page - 1) * limit };
+    };
+    var createReferralCode = async () => {
+      let code;
+      do {
+        code = `YTG${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+      } while (await User.exists({ staffReferralCode: code }));
+      return code;
+    };
+    var listStaff = asyncHandler(async (req, res) => {
+      const { page, limit, skip } = paginate(req.query);
+      const filter = { role: "staff" };
+      if (req.query.search) {
+        filter.$or = [
+          { name: { $regex: req.query.search, $options: "i" } },
+          { email: { $regex: req.query.search, $options: "i" } },
+          { staffReferralCode: { $regex: req.query.search, $options: "i" } }
+        ];
+      }
+      if (req.query.isBlocked !== void 0) filter.isBlocked = req.query.isBlocked === "true";
+      const [staffMembers, total] = await Promise.all([
+        User.find(filter).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        User.countDocuments(filter)
+      ]);
+      const settings = await ensureReferralSettings();
+      const ids = staffMembers.map((staff) => staff._id);
+      const [wallets, referralCounts, rewardTotals] = await Promise.all([
+        StaffWallet.find({ staff: { $in: ids } }).lean(),
+        User.aggregate([
+          { $match: { referredByStaff: { $in: ids } } },
+          { $group: { _id: "$referredByStaff", count: { $sum: 1 } } }
+        ]),
+        ReferralReward.aggregate([
+          { $match: { staff: { $in: ids } } },
+          {
+            $group: {
+              _id: "$staff",
+              earnedCommission: { $sum: "$commissionAmount" },
+              referralRevenue: { $sum: "$baseAmount" }
+            }
+          }
+        ])
+      ]);
+      const walletByStaff = new Map(wallets.map((wallet) => [String(wallet.staff), wallet]));
+      const referralsByStaff = new Map(referralCounts.map((item) => [String(item._id), item.count]));
+      const totalsByStaff = new Map(rewardTotals.map((item) => [String(item._id), item]));
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            staff: staffMembers.map((staff) => ({
+              ...staff,
+              staffCommissionRules: staff.usesGlobalCommissionRules ? settings.defaultRules : staff.staffCommissionRules,
+              wallet: walletByStaff.get(String(staff._id)) || null,
+              referralCount: referralsByStaff.get(String(staff._id)) || 0,
+              ...totalsByStaff.get(String(staff._id)) || { earnedCommission: 0, referralRevenue: 0 }
+            })),
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+          },
+          "Staff members fetched successfully"
+        )
+      );
+    });
+    var createStaff = asyncHandler(async (req, res) => {
+      const email = req.body.email.trim().toLowerCase();
+      if (await User.exists({ email })) {
+        throw new ApiError(409, "An account with this email already exists");
+      }
+      const settings = await ensureReferralSettings();
+      const session = await mongoose.startSession();
+      let staff;
+      try {
+        await session.withTransaction(async () => {
+          [staff] = await User.create(
+            [{
+              name: req.body.name,
+              email,
+              password: req.body.password,
+              phoneNumber: req.body.phoneNumber || null,
+              role: "staff",
+              isVerified: true,
+              staffReferralCode: await createReferralCode(),
+              staffCommissionRules: req.body.commissionRules || settings.defaultRules || DEFAULT_RULES,
+              usesGlobalCommissionRules: req.body.commissionRules === void 0
+            }],
+            { session }
+          );
+          await StaffWallet.create([{ staff: staff._id }], { session });
+        });
+      } finally {
+        await session.endSession();
+      }
+      res.status(201).json(new ApiResponse(201, { staff }, "Staff member created successfully"));
+    });
+    var getStaffDetail = asyncHandler(async (req, res) => {
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" }).select("name email phoneNumber staffReferralCode staffCommissionRules usesGlobalCommissionRules isVerified isBlocked createdAt updatedAt").lean();
+      if (!staff) throw new ApiError(404, "Staff member not found");
+      const referralSettings = await ensureReferralSettings();
+      const effectiveRules = staff.usesGlobalCommissionRules ? referralSettings.defaultRules : staff.staffCommissionRules;
+      const [
+        wallet,
+        referralCount,
+        memberCounts,
+        rewardTotals,
+        referrals,
+        rewards,
+        payouts,
+        ledger
+      ] = await Promise.all([
+        StaffWallet.findOne({ staff: staff._id }).lean(),
+        User.countDocuments({ referredByStaff: staff._id }),
+        User.aggregate([
+          { $match: { referredByStaff: staff._id } },
+          { $group: { _id: "$role", count: { $sum: 1 } } }
+        ]),
+        ReferralReward.aggregate([
+          { $match: { staff: staff._id } },
+          {
+            $group: {
+              _id: null,
+              earnedCommission: { $sum: "$commissionAmount" },
+              referralRevenue: { $sum: "$baseAmount" },
+              rewardedMembers: { $addToSet: "$member" }
+            }
+          }
+        ]),
+        paginatedRows(User.find({ referredByStaff: staff._id }).select("name email role phoneNumber isVerified isBlocked hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt").sort({ createdAt: -1, _id: -1 }), req.query, "referrals"),
+        paginatedRows(ReferralReward.find({ staff: staff._id }).populate({ path: "member", select: "name email role" }).sort({ createdAt: -1, _id: -1 }), req.query, "rewards"),
+        paginatedRows(StaffPayoutRequest.find({ staff: staff._id }).populate({ path: "staff", select: "name email staffReferralCode" }).populate({ path: "processedBy", select: "name email" }).sort({ createdAt: -1, _id: -1 }), req.query, "payouts"),
+        paginatedRows(StaffLedgerEntry.find({ staff: staff._id }).sort({ createdAt: -1, _id: -1 }), req.query, "ledger")
+      ]);
+      const memberIds = referrals.rows.map((member) => member._id);
+      const [shops, referralRewards] = await Promise.all([
+        Shop.find({ owner: { $in: memberIds } }).select("owner shopName businessType approvalStatus registrationFee createdAt").lean(),
+        ReferralReward.find({ staff: staff._id, member: { $in: memberIds } }).lean()
+      ]);
+      const shopsByOwner = groupById(shops, "owner");
+      const rewardsByMember = groupById(referralRewards, "member");
+      const summary = rewardTotals[0] || {};
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            staff: { ...staff, staffCommissionRules: effectiveRules, wallet: wallet || null },
+            globalRules: referralSettings.defaultRules,
+            summary: {
+              referralCount,
+              shopperCount: memberCounts.find((item) => item._id === "shopper")?.count || 0,
+              shopkeeperCount: memberCounts.find((item) => item._id === "shopkeeper")?.count || 0,
+              rewardedMembers: summary.rewardedMembers?.length || 0,
+              referralRevenue: summary.referralRevenue || 0,
+              earnedCommission: summary.earnedCommission || 0,
+              availableBalance: wallet?.availableBalance || 0,
+              reservedBalance: wallet?.reservedBalance || 0,
+              paidBalance: wallet?.paidBalance || 0
+            },
+            referrals: {
+              items: referrals.rows.map((member) => ({
+                ...member,
+                shops: shopsByOwner.get(String(member._id)) || [],
+                rewards: rewardsByMember.get(String(member._id)) || []
+              })),
+              pagination: referrals.pagination
+            },
+            rewards,
+            payouts,
+            ledger
+          },
+          "Staff member detail fetched successfully"
+        )
+      );
+    });
+    var paginatedRows = async (query, params, prefix) => {
+      const { page, limit, skip } = paginate(params, prefix);
+      const [rows, total] = await Promise.all([
+        query.skip(skip).limit(limit).lean(),
+        query.model.countDocuments(query.getFilter())
+      ]);
+      return { rows, pagination: { page, limit, total, pages: Math.ceil(total / limit) } };
+    };
+    var groupById = (items, key) => {
+      const grouped = /* @__PURE__ */ new Map();
+      for (const item of items) {
+        const id = String(item[key]);
+        const values = grouped.get(id) || [];
+        values.push(item);
+        grouped.set(id, values);
+      }
+      return grouped;
+    };
+    var updateStaff = asyncHandler(async (req, res) => {
+      const staff = await User.findOne({ _id: req.params.staffId, role: "staff" });
+      if (!staff) throw new ApiError(404, "Staff member not found");
+      if (req.body.name !== void 0) staff.name = req.body.name;
+      if (req.body.phoneNumber !== void 0) staff.phoneNumber = req.body.phoneNumber || null;
+      if (req.body.isBlocked !== void 0) staff.isBlocked = req.body.isBlocked;
+      if (req.body.commissionRules !== void 0) {
+        staff.staffCommissionRules = req.body.commissionRules;
+        staff.usesGlobalCommissionRules = false;
+      }
+      if (req.body.usesGlobalCommissionRules !== void 0) {
+        staff.usesGlobalCommissionRules = req.body.usesGlobalCommissionRules;
+      }
+      await staff.save();
+      res.status(200).json(new ApiResponse(200, { staff }, "Staff member updated successfully"));
+    });
+    var updateReferralSettings = asyncHandler(async (req, res) => {
+      const settings = await ReferralSettings.findOneAndUpdate(
+        { key: "global" },
+        {
+          $set: {
+            defaultRules: req.body.defaultRules,
+            updatedBy: req.user._id
+          },
+          $setOnInsert: { key: "global" }
+        },
+        { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+      );
+      res.status(200).json(new ApiResponse(200, { settings }, "Referral defaults updated successfully"));
+    });
+    var getReferralSettings = asyncHandler(async (_req, res) => {
+      const settings = await ensureReferralSettings();
+      res.status(200).json(new ApiResponse(200, { settings }, "Referral defaults fetched successfully"));
+    });
+    var listStaffPayouts = asyncHandler(async (req, res) => {
+      const { page, limit, skip } = paginate(req.query);
+      const filter = {};
+      if (req.query.status && req.query.status !== "all") filter.status = req.query.status;
+      if (req.params.staffId) filter.staff = req.params.staffId;
+      const [payouts, total] = await Promise.all([
+        StaffPayoutRequest.find(filter).populate({ path: "staff", select: "name email staffReferralCode" }).populate({ path: "processedBy", select: "name email" }).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        StaffPayoutRequest.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { payouts, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Staff payment requests fetched successfully"
+        )
+      );
+    });
+    var processStaffPayout = asyncHandler(async (req, res) => {
+      const session = await mongoose.startSession();
+      let payout;
+      try {
+        await session.withTransaction(async () => {
+          payout = await StaffPayoutRequest.findOneAndUpdate(
+            { _id: req.params.payoutId, status: "pending" },
+            {
+              $set: {
+                status: req.body.action,
+                processedBy: req.user._id,
+                processedAt: /* @__PURE__ */ new Date(),
+                rejectionReason: req.body.action === "rejected" ? req.body.reason || null : null
+              }
+            },
+            { new: true, session }
+          );
+          if (!payout) throw new ApiError(404, "Pending staff payment request not found");
+          const walletChanges = req.body.action === "completed" ? { $inc: { reservedBalance: -payout.amount, paidBalance: payout.amount } } : { $inc: { reservedBalance: -payout.amount, availableBalance: payout.amount } };
+          const wallet = await StaffWallet.findOneAndUpdate(
+            { staff: payout.staff, reservedBalance: { $gte: payout.amount } },
+            walletChanges,
+            { new: true, session }
+          );
+          if (!wallet) throw new ApiError(409, "Reserved staff balance is inconsistent; payout was not processed");
+          await StaffLedgerEntry.create(
+            [{
+              staff: payout.staff,
+              type: req.body.action === "completed" ? "payout_completed" : "payout_rejected",
+              amount: payout.amount,
+              availableBalanceAfter: wallet.availableBalance,
+              reference: payout._id,
+              meta: { reason: payout.rejectionReason }
+            }],
+            { session }
+          );
+        });
+      } finally {
+        await session.endSession();
+      }
+      await payout.populate([
+        { path: "staff", select: "name email staffReferralCode" },
+        { path: "processedBy", select: "name email" }
+      ]);
+      res.status(200).json(new ApiResponse(200, { payout }, `Staff payment request ${req.body.action}`));
+    });
+    module2.exports = {
+      listStaff,
+      createStaff,
+      getStaffDetail,
+      updateStaff,
+      getReferralSettings,
+      updateReferralSettings,
+      listStaffPayouts,
+      processStaffPayout
+    };
+  }
+});
+
+// src/validators/referral.validator.js
+var require_referral_validator = __commonJS({
+  "src/validators/referral.validator.js"(exports2, module2) {
+    var { body, param, query } = require("express-validator");
+    var ruleFields = (prefix, required = false) => [
+      body(`${prefix}.type`).if((value, { req }) => required || req.body[prefix.split(".")[0]] !== void 0).isIn(["fixed", "percentage"]).withMessage(`${prefix}.type must be fixed or percentage`),
+      body(`${prefix}.value`).if((value, { req }) => required || req.body[prefix.split(".")[0]] !== void 0).isFloat({ min: 0 }).withMessage(`${prefix}.value must be zero or greater`),
+      body(`${prefix}.value`).if((value, { req }) => req.body[prefix.split(".")[0]]?.type === "percentage").isFloat({ max: 100 }).withMessage(`${prefix}.value cannot exceed 100 for percentage commissions`)
+    ];
+    var commissionRulesFields = (container, required = false) => [
+      ...ruleFields(`${container}.shopper`, required),
+      ...ruleFields(`${container}.shopkeeper`, required)
+    ];
+    var paginationFields = [
+      query("page").optional().isInt({ min: 1 }).withMessage("page must be a positive integer"),
+      query("limit").optional().isInt({ min: 1, max: 100 }).withMessage("limit must be between 1 and 100")
+    ];
+    var staffListValidator = [
+      ...paginationFields,
+      query("search").optional().trim().isLength({ min: 1, max: 100 }).withMessage("search must be 1 to 100 characters"),
+      query("isBlocked").optional().isIn(["true", "false"]).withMessage("isBlocked must be true or false")
+    ];
+    var createStaffValidator = [
+      body("name").trim().notEmpty().withMessage("Name is required"),
+      body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
+      body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
+      body("phoneNumber").optional({ values: "null" }).trim().isLength({ max: 20 }).withMessage("phoneNumber must be at most 20 characters"),
+      ...commissionRulesFields("commissionRules")
+    ];
+    var updateStaffValidator = [
+      param("staffId").isMongoId().withMessage("staffId must be a valid id"),
+      body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
+      body("phoneNumber").optional({ values: "null" }).trim().isLength({ max: 20 }).withMessage("phoneNumber must be at most 20 characters"),
+      body("isBlocked").optional().isBoolean().withMessage("isBlocked must be true or false"),
+      body("usesGlobalCommissionRules").optional().isBoolean().withMessage("usesGlobalCommissionRules must be true or false"),
+      ...commissionRulesFields("commissionRules")
+    ];
+    var staffDetailValidator = [
+      param("staffId").isMongoId().withMessage("staffId must be a valid id"),
+      ...paginationFields,
+      query("referralspage").optional().isInt({ min: 1 }).withMessage("referralsPage must be a positive integer"),
+      query("referralslimit").optional().isInt({ min: 1, max: 100 }).withMessage("referralsLimit must be between 1 and 100"),
+      query("rewardspage").optional().isInt({ min: 1 }).withMessage("rewardsPage must be a positive integer"),
+      query("rewardslimit").optional().isInt({ min: 1, max: 100 }).withMessage("rewardsLimit must be between 1 and 100"),
+      query("payoutspage").optional().isInt({ min: 1 }).withMessage("payoutsPage must be a positive integer"),
+      query("payoutslimit").optional().isInt({ min: 1, max: 100 }).withMessage("payoutsLimit must be between 1 and 100"),
+      query("ledgerpage").optional().isInt({ min: 1 }).withMessage("ledgerPage must be a positive integer"),
+      query("ledgerlimit").optional().isInt({ min: 1, max: 100 }).withMessage("ledgerLimit must be between 1 and 100")
+    ];
+    var referralSettingsValidator = commissionRulesFields("defaultRules", true);
+    var payoutListValidator = [
+      ...paginationFields,
+      query("status").optional().isIn(["pending", "completed", "rejected", "all"]).withMessage("Invalid payout status"),
+      param("staffId").optional().isMongoId().withMessage("staffId must be a valid id")
+    ];
+    var requestPayoutValidator = [
+      body("amount").isFloat({ min: 0.01 }).withMessage("amount must be greater than 0"),
+      body("method").isIn(["jazzcash", "easypaisa", "bank"]).withMessage("Invalid payout method"),
+      body("accountDetails").trim().isLength({ min: 5, max: 300 }).withMessage("accountDetails must be 5 to 300 characters")
+    ];
+    var processPayoutValidator = [
+      param("payoutId").isMongoId().withMessage("payoutId must be a valid id"),
+      body("action").isIn(["completed", "rejected"]).withMessage("action must be completed or rejected"),
+      body("reason").if(body("action").equals("rejected")).trim().isLength({ max: 500 }).withMessage("reason must be at most 500 characters"),
+      body("reason").optional({ values: "null" }).trim().isLength({ max: 500 }).withMessage("reason must be at most 500 characters")
+    ];
+    module2.exports = {
+      staffListValidator,
+      createStaffValidator,
+      updateStaffValidator,
+      staffDetailValidator,
+      referralSettingsValidator,
+      payoutListValidator,
+      requestPayoutValidator,
+      processPayoutValidator
+    };
   }
 });
 
@@ -3312,9 +4113,37 @@ var require_admin_routes = __commonJS({
     var { body, param, query } = require("express-validator");
     var validate = require_validate_middleware();
     var { authenticate, authorize } = require_auth_middleware();
+    var {
+      listStaff,
+      createStaff,
+      getStaffDetail,
+      updateStaff,
+      getReferralSettings,
+      updateReferralSettings,
+      listStaffPayouts,
+      processStaffPayout
+    } = require_adminReferral_controller();
+    var {
+      staffListValidator,
+      createStaffValidator,
+      updateStaffValidator,
+      staffDetailValidator,
+      referralSettingsValidator,
+      payoutListValidator,
+      processPayoutValidator
+    } = require_referral_validator();
     var router = express.Router();
     router.use(authenticate, authorize("admin"));
     router.get("/stats", getStats);
+    router.get("/referral-settings", getReferralSettings);
+    router.patch("/referral-settings", referralSettingsValidator, validate, updateReferralSettings);
+    router.get("/staff", staffListValidator, validate, listStaff);
+    router.post("/staff", createStaffValidator, validate, createStaff);
+    router.get("/staff/:staffId", staffDetailValidator, validate, getStaffDetail);
+    router.patch("/staff/:staffId", updateStaffValidator, validate, updateStaff);
+    router.get("/staff-payouts", payoutListValidator, validate, listStaffPayouts);
+    router.get("/staff/:staffId/payouts", payoutListValidator, validate, listStaffPayouts);
+    router.post("/staff-payouts/:payoutId/process", processPayoutValidator, validate, processStaffPayout);
     router.get("/users", listUsersValidator, validate, listUsers);
     router.post("/users", createUserValidator, validate, createUser);
     router.get("/users/:id", getUser);
@@ -3379,6 +4208,8 @@ var require_shopkeeper_controller = __commonJS({
     var { uploadImageBuffer } = require_cloudinary();
     var { notifyAdmin, notifyUser } = require_mailer();
     var { getCompanyRate } = require_commission();
+    var mongoose = require("mongoose");
+    var { awardReferralCommission } = require_referral_service();
     var SHOPKEEPER_REGISTRATION_FEE = 3e3;
     var DEFAULT_SEARCH_RADIUS_KM = 50;
     var getBusinessType = (category) => {
@@ -3488,7 +4319,6 @@ var require_shopkeeper_controller = __commonJS({
       const { shopName, phoneNumber, address, description, categories, city, lat, lng } = req.body;
       const businessType = getBusinessType(categories[0]);
       const commissionRate = getCompanyRate(categories[0]);
-      const isFirstShop = !await Shop.exists({ owner: user._id });
       let imageUrl = null;
       if (req.file) {
         const uploadedImage = await uploadImageBuffer(req.file.buffer, {
@@ -3496,47 +4326,75 @@ var require_shopkeeper_controller = __commonJS({
         });
         imageUrl = uploadedImage.secure_url;
       }
-      const wallet = await getOrCreateWallet(user._id);
-      if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
-        throw new ApiError(400, "Insufficient main wallet balance for the Rs 3000 shop registration fee");
-      }
-      await debitWallet(user._id, "main", SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
-        shopName,
-        categories
-      });
-      await creditCompanyWallet(user._id, SHOPKEEPER_REGISTRATION_FEE, "shopkeeper_registration_fee", {
-        shopName,
-        categories
-      });
-      const shop = await Shop.create({
-        owner: user._id,
-        businessType,
-        shopName,
-        phoneNumber,
-        businessAddress: address,
-        businessDescription: description || null,
-        businessImage: imageUrl,
-        businessCategories: [...new Set(categories)],
-        commissionRate,
-        city,
-        location: { type: "Point", coordinates: [lng, lat] },
-        registrationFee: SHOPKEEPER_REGISTRATION_FEE,
-        approvalStatus: "pending",
-        isVerified: false
-      });
-      if (isFirstShop) {
-        if (user.role === "shopper") user.role = "shopkeeper";
-        user.businessType = businessType;
-        user.shopName = shopName;
-        user.phoneNumber = phoneNumber;
-        user.businessAddress = address;
-        user.businessDescription = description || null;
-        user.businessImage = imageUrl;
-        user.businessCategories = [...new Set(categories)];
-        user.taxRate = commissionRate;
-        user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
-        user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
-        await user.save();
+      const session = await mongoose.startSession();
+      let shop;
+      try {
+        await session.withTransaction(async () => {
+          const isFirstShop = !await Shop.exists({ owner: user._id }).session(session);
+          const wallet = await getOrCreateWallet(user._id, { session });
+          if (wallet.mainBalance < SHOPKEEPER_REGISTRATION_FEE) {
+            throw new ApiError(400, "Insufficient main wallet balance for the Rs 3000 shop registration fee");
+          }
+          await debitWallet(
+            user._id,
+            "main",
+            SHOPKEEPER_REGISTRATION_FEE,
+            "shopkeeper_registration_fee",
+            { shopName, categories },
+            { session }
+          );
+          await creditCompanyWallet(
+            user._id,
+            SHOPKEEPER_REGISTRATION_FEE,
+            "shopkeeper_registration_fee",
+            { shopName, categories },
+            { session }
+          );
+          [shop] = await Shop.create(
+            [{
+              owner: user._id,
+              businessType,
+              shopName,
+              phoneNumber,
+              businessAddress: address,
+              businessDescription: description || null,
+              businessImage: imageUrl,
+              businessCategories: [...new Set(categories)],
+              commissionRate,
+              city,
+              location: { type: "Point", coordinates: [lng, lat] },
+              registrationFee: SHOPKEEPER_REGISTRATION_FEE,
+              approvalStatus: "pending",
+              isVerified: false
+            }],
+            { session }
+          );
+          if (isFirstShop) {
+            if (user.role === "shopper") user.role = "shopkeeper";
+            user.businessType = businessType;
+            user.shopName = shopName;
+            user.phoneNumber = phoneNumber;
+            user.businessAddress = address;
+            user.businessDescription = description || null;
+            user.businessImage = imageUrl;
+            user.businessCategories = [...new Set(categories)];
+            user.taxRate = commissionRate;
+            user.shopkeeperRegistrationFee = SHOPKEEPER_REGISTRATION_FEE;
+            user.shopkeeperRegisteredAt = /* @__PURE__ */ new Date();
+            await user.save({ session });
+          }
+          await awardReferralCommission(
+            {
+              memberId: user._id,
+              memberType: "shopkeeper",
+              trigger: "shop_registration",
+              baseAmount: SHOPKEEPER_REGISTRATION_FEE
+            },
+            { session }
+          );
+        });
+      } finally {
+        await session.endSession();
       }
       Promise.all([
         notifyAdmin({
@@ -3651,6 +4509,201 @@ var require_shopkeeper_routes = __commonJS({
   }
 });
 
+// src/controllers/staff.controller.js
+var require_staff_controller = __commonJS({
+  "src/controllers/staff.controller.js"(exports2, module2) {
+    var asyncHandler = require_asyncHandler();
+    var ApiError = require_ApiError();
+    var ApiResponse = require_ApiResponse();
+    var User = require_user_model();
+    var Shop = require_shop_model();
+    var ReferralReward = require_referralReward_model();
+    var StaffWallet = require_staffWallet_model();
+    var StaffPayoutRequest = require_staffPayoutRequest_model();
+    var StaffLedgerEntry = require_staffLedgerEntry_model();
+    var mongoose = require("mongoose");
+    var { getReferralSettings } = require_referral_service();
+    var paginate = (query) => {
+      const page = Math.max(Number(query.page) || 1, 1);
+      const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
+      return { page, limit, skip: (page - 1) * limit };
+    };
+    var getDashboard = asyncHandler(async (req, res) => {
+      const staffId = req.user._id;
+      const [wallet, referralCount, rewardTotals, pendingPayouts, settings] = await Promise.all([
+        StaffWallet.findOne({ staff: staffId }).lean(),
+        User.countDocuments({ referredByStaff: staffId }),
+        ReferralReward.aggregate([
+          { $match: { staff: staffId } },
+          {
+            $group: {
+              _id: null,
+              earnedCommission: { $sum: "$commissionAmount" },
+              referralRevenue: { $sum: "$baseAmount" },
+              rewardedMembers: { $addToSet: "$member" }
+            }
+          }
+        ]),
+        StaffPayoutRequest.aggregate([
+          { $match: { staff: staffId, status: "pending" } },
+          { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: "$amount" } } }
+        ]),
+        getReferralSettings()
+      ]);
+      const totals = rewardTotals[0] || {};
+      const pending = pendingPayouts[0] || {};
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            staff: {
+              _id: req.user._id,
+              name: req.user.name,
+              email: req.user.email,
+              phoneNumber: req.user.phoneNumber,
+              referralCode: req.user.staffReferralCode,
+              commissionRules: req.user.usesGlobalCommissionRules ? settings.defaultRules : req.user.staffCommissionRules,
+              usesGlobalCommissionRules: req.user.usesGlobalCommissionRules
+            },
+            summary: {
+              referralCount,
+              rewardedMembers: totals.rewardedMembers?.length || 0,
+              referralRevenue: totals.referralRevenue || 0,
+              earnedCommission: totals.earnedCommission || 0,
+              availableBalance: wallet?.availableBalance || 0,
+              reservedBalance: wallet?.reservedBalance || 0,
+              paidBalance: wallet?.paidBalance || 0,
+              pendingPayoutCount: pending.count || 0,
+              pendingPayoutAmount: pending.amount || 0
+            }
+          },
+          "Staff dashboard fetched successfully"
+        )
+      );
+    });
+    var listReferrals = asyncHandler(async (req, res) => {
+      const { page, limit, skip } = paginate(req.query);
+      const filter = { referredByStaff: req.user._id };
+      const [members, total] = await Promise.all([
+        User.find(filter).select("name email role phoneNumber isVerified hasActivatedToken shopkeeperRegistrationFee shopkeeperRegisteredAt createdAt").sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        User.countDocuments(filter)
+      ]);
+      const memberIds = members.map((member) => member._id);
+      const [shops, rewards] = await Promise.all([
+        Shop.find({ owner: { $in: memberIds } }).select("owner shopName approvalStatus registrationFee createdAt").lean(),
+        ReferralReward.find({ staff: req.user._id, member: { $in: memberIds } }).select("member memberType trigger baseAmount commissionType commissionRate commissionAmount createdAt").lean()
+      ]);
+      const shopsByOwner = /* @__PURE__ */ new Map();
+      for (const shop of shops) {
+        const ownerId = String(shop.owner);
+        const ownerShops = shopsByOwner.get(ownerId) || [];
+        ownerShops.push(shop);
+        shopsByOwner.set(ownerId, ownerShops);
+      }
+      const rewardsByMember = /* @__PURE__ */ new Map();
+      for (const reward of rewards) {
+        const memberId = String(reward.member);
+        const memberRewards = rewardsByMember.get(memberId) || [];
+        memberRewards.push(reward);
+        rewardsByMember.set(memberId, memberRewards);
+      }
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          {
+            referrals: members.map((member) => ({
+              ...member,
+              shops: shopsByOwner.get(String(member._id)) || [],
+              rewards: rewardsByMember.get(String(member._id)) || []
+            })),
+            pagination: { page, limit, total, pages: Math.ceil(total / limit) }
+          },
+          "Referrals fetched successfully"
+        )
+      );
+    });
+    var listPayouts = asyncHandler(async (req, res) => {
+      const { page, limit, skip } = paginate(req.query);
+      const filter = { staff: req.user._id };
+      const [payouts, total] = await Promise.all([
+        StaffPayoutRequest.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+        StaffPayoutRequest.countDocuments(filter)
+      ]);
+      res.status(200).json(
+        new ApiResponse(
+          200,
+          { payouts, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
+          "Staff payment requests fetched successfully"
+        )
+      );
+    });
+    var requestPayout = asyncHandler(async (req, res) => {
+      const amount = Number(req.body.amount);
+      const session = await mongoose.startSession();
+      let payout;
+      try {
+        await session.withTransaction(async () => {
+          const wallet = await StaffWallet.findOneAndUpdate(
+            { staff: req.user._id, availableBalance: { $gte: amount } },
+            {
+              $inc: {
+                availableBalance: -amount,
+                reservedBalance: amount
+              }
+            },
+            { new: true, session }
+          );
+          if (!wallet) {
+            throw new ApiError(400, "Requested amount exceeds your available commission balance");
+          }
+          [payout] = await StaffPayoutRequest.create(
+            [{
+              staff: req.user._id,
+              amount,
+              method: req.body.method,
+              accountDetails: req.body.accountDetails.trim()
+            }],
+            { session }
+          );
+          await StaffLedgerEntry.create(
+            [{
+              staff: req.user._id,
+              type: "payout_requested",
+              amount,
+              availableBalanceAfter: wallet.availableBalance,
+              reference: payout._id,
+              meta: { method: payout.method, accountDetails: payout.accountDetails }
+            }],
+            { session }
+          );
+        });
+      } finally {
+        await session.endSession();
+      }
+      res.status(201).json(new ApiResponse(201, { payout }, "Payment request submitted for admin review"));
+    });
+    module2.exports = { getDashboard, listReferrals, listPayouts, requestPayout };
+  }
+});
+
+// src/routes/staff.routes.js
+var require_staff_routes = __commonJS({
+  "src/routes/staff.routes.js"(exports2, module2) {
+    var express = require("express");
+    var { getDashboard, listReferrals, listPayouts, requestPayout } = require_staff_controller();
+    var { requestPayoutValidator } = require_referral_validator();
+    var validate = require_validate_middleware();
+    var { authenticate, authorize } = require_auth_middleware();
+    var router = express.Router();
+    router.use(authenticate, authorize("staff"));
+    router.get("/dashboard", getDashboard);
+    router.get("/referrals", listReferrals);
+    router.get("/payouts", listPayouts);
+    router.post("/payouts", requestPayoutValidator, validate, requestPayout);
+    module2.exports = router;
+  }
+});
+
 // src/routes/index.js
 var require_routes = __commonJS({
   "src/routes/index.js"(exports2, module2) {
@@ -3662,6 +4715,7 @@ var require_routes = __commonJS({
     var drawRoutes = require_draw_routes();
     var adminRoutes = require_admin_routes();
     var shopkeeperRoutes = require_shopkeeper_routes();
+    var staffRoutes = require_staff_routes();
     var router = express.Router();
     router.get("/health", (_req, res) => res.status(200).json({ success: true, message: "OK" }));
     router.use("/auth", authRoutes);
@@ -3671,6 +4725,7 @@ var require_routes = __commonJS({
     router.use("/draws", drawRoutes);
     router.use("/admin", adminRoutes);
     router.use("/shopkeepers", shopkeeperRoutes);
+    router.use("/staff", staffRoutes);
     module2.exports = router;
   }
 });

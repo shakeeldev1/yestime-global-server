@@ -116,6 +116,9 @@ const updateUser = asyncHandler(async (req, res) => {
   if (!user) {
     throw new ApiError(404, 'User not found');
   }
+  if (user.role === 'staff' || req.body.role === 'staff') {
+    throw new ApiError(400, 'Manage referral staff through the staff management dashboard');
+  }
 
   const { name, role, businessType } = req.body;
 
@@ -176,6 +179,9 @@ const deleteUser = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id);
   if (!user) {
     throw new ApiError(404, 'User not found');
+  }
+  if (user.role === 'staff') {
+    throw new ApiError(400, 'Staff records are retained for referral and payment history; block the account instead');
   }
 
   const [wallet, tokenCount] = await Promise.all([
